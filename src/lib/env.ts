@@ -32,6 +32,10 @@ const schema = z.object({
   ALLOWLIST_EMAILS: emailList,
   ADMIN_EMAILS: emailList,
   EXEC_EMAILS: emailList,
+
+  // Optional in dev — unset means emails log to the console instead of sending.
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM: z.string().default("Pickleball at Berkeley <onboarding@resend.dev>"),
 });
 
 export type Env = z.infer<typeof schema>;
