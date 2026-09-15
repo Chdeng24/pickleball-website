@@ -1,26 +1,92 @@
 @import "tailwindcss";
 
+@theme {
+  /* ── Brand palette, sampled from the club logo ─────────────────────────── */
+  --color-navy-950: #04122b;
+  --color-navy-900: #071d45;
+  --color-navy-800: #0a2a66;  /* primary — logo background */
+  --color-navy-700: #103a8a;
+  --color-navy-600: #1a4fae;
+  --color-navy-300: #8fb0e8;
+
+  --color-gold-500: #fdb515;  /* Cal gold — logo ball + grips */
+  --color-gold-400: #ffc72c;
+  --color-gold-300: #ffd968;
+
+  --color-chalk: #f6f7f9;
+  --color-ink: #0b1220;
+
+  --font-display: var(--font-archivo), "Archivo", system-ui, sans-serif;
+  --font-sans: var(--font-inter), "Inter", system-ui, sans-serif;
+
+  /* Athletic type scale — big, tight, confident */
+  --text-mega: clamp(2.75rem, 11vw, 9rem);
+  --text-mega--line-height: 0.88;
+  --text-mega--letter-spacing: -0.035em;
+
+  --text-display: clamp(2rem, 5.5vw, 4.25rem);
+  --text-display--line-height: 0.95;
+  --text-display--letter-spacing: -0.03em;
+
+  --text-kicker: 0.75rem;
+  --text-kicker--line-height: 1;
+  --text-kicker--letter-spacing: 0.18em;
+}
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: var(--color-ink);
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@layer base {
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  ::selection {
+    background: var(--color-gold-500);
+    color: var(--color-navy-900);
+  }
+
+  /* Focus ring that stays visible on both navy and white grounds */
+  :focus-visible {
+    outline: 2px solid var(--color-gold-500);
+    outline-offset: 3px;
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+@layer components {
+  /* Uppercase eyebrow label with the gold rule the brand leans on */
+  .kicker {
+    font-family: var(--font-display);
+    font-size: var(--text-kicker);
+    letter-spacing: var(--text-kicker--letter-spacing);
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+}
+
+/* Subtle film grain so full-bleed media doesn't band on large screens */
+.grain::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.16;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Respect users who don't want motion — motion lib reads this too */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
