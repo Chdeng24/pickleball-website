@@ -1,3 +1,4 @@
+import { relations } from "drizzle-orm";
 import {
   boolean,
   integer,
@@ -293,3 +294,61 @@ export const verificationTokens = pgTable(
   },
   (t) => [primaryKey({ columns: [t.identifier, t.token] })],
 );
+
+/* ─── Relations (for db().query.*.findFirst({ with: {...} })) ──────────────── */
+
+export const usersRelations = relations(users, ({ many }) => ({
+  rsvps: many(rsvps),
+  notes: many(memberNotes, { relationName: "notesAboutMember" }),
+}));
+
+export const eventsRelations = relations(events, ({ many }) => ({
+  rsvps: many(rsvps),
+}));
+
+export const rsvpsRelations = relations(rsvps, ({ one }) => ({
+  event: one(events, { fields: [rsvps.eventId], references: [events.id] }),
+  member: one(users, { fields: [rsvps.memberId], references: [users.id] }),
+}));
+
+export const memberNotesRelations = relations(memberNotes, ({ one }) => ({
+  member: one(users, {
+    fields: [memberNotes.memberId],
+    references: [users.id],
+    relationName: "notesAboutMember",
+  }),
+  author: one(users, { fields: [memberNotes.authorId], references: [users.id] }),
+}));
+
+export const rosterEmailsRelations = relations(rosterEmails, ({ one }) => ({
+  importedByUser: one(users, { fields: [rosterEmails.importedBy], references: [users.id] }),
+}));
+
+export const tournamentsRelations = relations(tournaments, ({ many }) => ({
+  teams: many(tmTeams),
+  matches: many(matches),
+}));
+
+export const tmTeamsRelations = relations(tmTeams, ({ one, many }) => ({
+  tournament: one(tournaments, { fields: [tmTeams.tournamentId], references: [tournaments.id] }),
+  members: many(tmTeamMembers),
+}));
+
+export const tmTeamMembersRelations = relations(tmTeamMembers, ({ one }) => ({
+  team: one(tmTeams, { fields: [tmTeamMembers.teamId], references: [tmTeams.id] }),
+  member: one(users, { fields: [tmTeamMembers.memberId], references: [users.id] }),
+}));
+
+export const matchesRelations = relations(matches, ({ one, many }) => ({
+  tournament: one(tournaments, { fields: [matches.tournamentId], references: [tournaments.id] }),
+  teamA: one(tmTeams, { fields: [matches.teamAId], references: [tmTeams.id] }),
+  teamB: one(tmTeams, { fields: [matches.teamBId], references: [tmTeams.id] }),
+  winnerTeam: one(tmTeams, { fields: [matches.winnerTeamId], references: [tmTeams.id] }),
+  reports: many(matchReports),
+}));
+
+export const matchReportsRelations = relations(matchReports, ({ one }) => ({
+  match: one(matches, { fields: [matchReports.matchId], references: [matches.id] }),
+  reportedByUser: one(users, { fields: [matchReports.reportedBy], references: [users.id] }),
+  winnerTeam: one(tmTeams, { fields: [matchReports.winnerTeamId], references: [tmTeams.id] }),
+}));

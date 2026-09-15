@@ -1,7 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo, Inter } from "next/font/google";
-import { Header } from "@/components/site/header";
-import { Footer } from "@/components/site/footer";
+import { Toaster } from "sonner";
 import { club } from "@/lib/content";
 import "./globals.css";
 
@@ -37,6 +36,9 @@ export const viewport: Viewport = {
   themeColor: "#0a2a66",
 };
 
+// Deliberately no Header/Footer here — those live in (public)/layout.tsx so
+// /login, /pending, and the (member) area (which has its own MemberNav) don't
+// inherit the marketing chrome.
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
@@ -44,9 +46,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${archivo.variable} ${inter.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col bg-white">
-        <Header />
-        <main className="flex-1">{children}</main>
-        <Footer />
+        {children}
+        <Toaster position="bottom-center" richColors />
       </body>
     </html>
   );

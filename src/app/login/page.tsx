@@ -1,11 +1,37 @@
 import type { Metadata } from "next";
 import Image from "next/image";
+import { redirect } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { Container } from "@/components/ui/container";
+import { getSessionUser } from "@/lib/session";
+import { isActiveMember } from "@/lib/access";
+import { SignInButton } from "./sign-in-button";
 
 export const metadata: Metadata = { title: "Member Login" };
 
-export default function LoginPage() {
+/** Auth.js error codes mapped to copy a member will actually understand. */
+const ERROR_MESSAGES: Record<string, string> = {
+  AccessDenied:
+    "That account isn't eligible. Sign in with your @berkeley.edu address.",
+  Configuration: "Sign-in is temporarily unavailable. Please try again shortly.",
+  Verification: "That sign-in link has expired. Please try again.",
+};
+
+export default async function LoginPage({
+  searchParams,
+}: PageProps<"/login">) {
+  const params = await searchParams;
+  const errorCode = typeof params.error === "string" ? params.error : null;
+
+  const user = await getSessionUser();
+  if (user) {
+    redirect(isActiveMember(user) ? "/dashboard" : "/pending");
+  }
+
+  const errorMessage = errorCode
+    ? (ERROR_MESSAGES[errorCode] ?? "Something went wrong signing you in. Please try again.")
+    : null;
+
   return (
     <div className="grain relative flex min-h-[100svh] items-center bg-navy-900 py-32">
       <div
@@ -29,16 +55,13 @@ export default function LoginPage() {
             limited to students on the club roster.
           </p>
 
-          {/* Phase 3: replaced by the real Auth.js Google button */}
-          <button
-            disabled
-            className="mt-9 flex h-12 w-full items-center justify-center gap-3 bg-white/90 font-display text-sm font-bold uppercase tracking-[0.1em] text-navy-900 disabled:opacity-45"
-          >
-            Continue with Google
-          </button>
-          <p className="mt-4 text-center text-xs text-white/35">
-            Sign-in goes live with the member area.
-          </p>
+          {errorMessage && (
+            <p className="mt-6 border-2 border-red-400/40 bg-red-400/10 p-3 text-center text-sm text-red-200">
+              {errorMessage}
+            </p>
+          )}
+
+          <SignInButton />
 
           <p className="mt-8 flex items-start gap-2.5 border-t border-white/10 pt-6 text-xs leading-relaxed text-white/40">
             <ShieldCheck size={15} className="mt-0.5 shrink-0 text-gold-500" />
