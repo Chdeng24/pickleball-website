@@ -30,6 +30,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
   const e = env();
 
   return {
+    // Required outside Vercel — Auth.js only auto-trusts a small list of known
+    // hosts, and rejects everything else as a security precaution. Cloudflare
+    // Workers isn't on that list, so without this every sign-in attempt fails
+    // with a generic "Configuration" error.
+    trustHost: true,
     adapter: DrizzleAdapter(db(), {
       usersTable: schema.users,
       accountsTable: schema.accounts,
