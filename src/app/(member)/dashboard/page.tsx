@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, asc, eq, gte } from "drizzle-orm";
-import { CalendarDays, MapPin, Users } from "lucide-react";
+import { and, asc, eq, gte, ne } from "drizzle-orm";
+import { CalendarDays, MapPin, Trophy, Users } from "lucide-react";
 import { db, schema } from "@/db";
 import { getSessionUser } from "@/lib/session";
 import { formatEventWhen } from "@/lib/dates";
@@ -26,6 +26,7 @@ export default async function DashboardPage() {
           and(
             eq(schema.rsvps.memberId, user.id),
             eq(schema.rsvps.status, "confirmed"),
+            ne(schema.events.type, "tournament"),
             gte(schema.events.startsAt, now),
           ),
         )
@@ -36,14 +37,35 @@ export default async function DashboardPage() {
   const nextEvent = nextRows[0]?.event ?? null;
 
   // "Open for RSVP" — published, upcoming, RSVP window already open.
+  // Tournaments get their own section below — infrequent enough that they'd
+  // otherwise get lost between weekly practices.
   const openEvents = await db()
     .select()
     .from(schema.events)
-    .where(and(eq(schema.events.published, true), gte(schema.events.startsAt, now)))
+    .where(
+      and(
+        eq(schema.events.published, true),
+        ne(schema.events.type, "tournament"),
+        gte(schema.events.startsAt, now),
+      ),
+    )
     .orderBy(asc(schema.events.startsAt))
     .limit(6);
 
   const rsvpOpen = openEvents.filter((e) => !e.rsvpOpensAt || e.rsvpOpensAt <= now);
+
+  const upcomingTournaments = await db()
+    .select()
+    .from(schema.events)
+    .where(
+      and(
+        eq(schema.events.published, true),
+        eq(schema.events.type, "tournament"),
+        gte(schema.events.startsAt, now),
+      ),
+    )
+    .orderBy(asc(schema.events.startsAt))
+    .limit(4);
 
   return (
     <div className="space-y-12">
@@ -121,6 +143,42 @@ export default async function DashboardPage() {
                       <Users size={14} /> cap {event.capacity}
                     </span>
                   )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <h2 className="font-display text-sm font-bold uppercase tracking-[0.14em] text-ink/50">
+          Tournaments
+        </h2>
+
+        {upcomingTournaments.length === 0 ? (
+          <div className="mt-4 border-2 border-dashed border-navy-900/15 bg-white p-8 text-center text-sm text-ink/50">
+            Nothing scheduled right now.{" "}
+            <Link href="/tournaments" className="font-semibold text-navy-800 underline underline-offset-2">
+              See the Pickleball League
+            </Link>
+          </div>
+        ) : (
+          <ul className="mt-4 space-y-3">
+            {upcomingTournaments.map((event) => (
+              <li key={event.id}>
+                <Link
+                  href={`/events/${event.id}`}
+                  className="flex items-center justify-between gap-4 border-2 border-navy-900/10 bg-white p-5 transition-colors hover:border-navy-900"
+                >
+                  <div>
+                    <p className="font-display text-base font-bold uppercase text-navy-900">
+                      {event.title}
+                    </p>
+                    <p className="mt-1 text-sm text-ink/60">
+                      {formatEventWhen(event.startsAt, event.endsAt)}
+                    </p>
+                  </div>
+                  <Trophy size={16} className="shrink-0 text-gold-500" />
                 </Link>
               </li>
             ))}

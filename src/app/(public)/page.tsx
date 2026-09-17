@@ -78,7 +78,7 @@ export default function HomePage() {
         tone="chalk"
         kicker="Compete"
         title="Play for something"
-        lead="A semester-long intramural bracket and one-day club tournaments — both free, both open to every member."
+        lead="A semester-long Pickleball League and one-day club tournaments — both free, both open to every member."
       >
         <TournamentCards />
       </Section>

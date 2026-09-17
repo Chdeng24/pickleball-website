@@ -6,6 +6,7 @@ import { db, schema } from "@/db";
 import { formatEventWhen } from "@/lib/dates";
 import { Kicker } from "@/components/ui/kicker";
 import { SignOutButton } from "@/components/site/sign-out-button";
+import { DuprForm } from "./dupr-form";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -54,6 +55,8 @@ export default async function ProfilePage() {
           <p className="mt-1 font-display text-lg font-bold capitalize text-navy-900">{user.role}</p>
         </div>
       </dl>
+
+      <DuprForm initialUrl={user.duprUrl} />
 
       <section>
         <Kicker>Your history</Kicker>

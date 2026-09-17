@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
+import { ArrowLeft } from "lucide-react";
 import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
 import { listRsvps } from "@/lib/rsvp";
@@ -20,6 +22,12 @@ export default async function EventRsvpsPage({ params }: PageProps<"/exec/events
 
   return (
     <div className="space-y-10">
+      <Link
+        href="/exec/events"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-navy-800 underline underline-offset-2"
+      >
+        <ArrowLeft size={14} /> Back to events
+      </Link>
       <div>
         <h1 className="font-display text-3xl font-extrabold uppercase text-navy-900">
           {event.title}

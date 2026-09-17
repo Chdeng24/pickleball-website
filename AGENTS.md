@@ -12,13 +12,14 @@ Supporting docs:
 | `PLAN.md` | Architecture and the reasoning behind key decisions |
 | `SETUP.md` | Neon + Google OAuth setup. A human must do this before Tranche A. |
 | `MEDIA.md` | Drone footage encoding settings |
+| `DEPLOY.md` | Cloudflare Workers deploy. A human must do this before going live (Tranche G). |
 
 ## Quick reference
 
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"   # node is not on PATH
 npm run dev          # localhost:3000
-npm test             # node --test over src/**/*.test.ts  (21 passing)
+npm test             # node --test over src/**/*.test.ts  (45 passing)
 npm run lint
 npm run build
 npm run db:push      # apply schema to Neon

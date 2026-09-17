@@ -49,9 +49,15 @@ COMMIT
 Neon Postgres chosen over Cloudflare D1 specifically because it gives real
 interactive transactions with row locks.
 
-**Two auth gates, not one.** Verify the `hd` claim server-side (the client param is
-spoofable), *then* check the roster allowlist. Domain alone would let any Berkeley
-student take a practice spot.
+**Two auth gates, not one.** Gate 1 (`canSignIn`) only checks that Google verified
+the email — sign-in isn't domain-restricted, since membership isn't limited to
+@berkeley.edu (a roster entry can be a non-Berkeley coach or sponsor). Gate 2
+(`initialAccess`) is the one that matters, and it's not roster-alone either:
+strict mode auto-approves only a roster email that's *also* on
+`ALLOWED_EMAIL_DOMAIN` — a roster entry on some other domain still needs a
+human to approve it. Everyone else lands in `pending` until exec approves
+them. Domain alone was never going to work as the *only* gate — it would let
+any Berkeley student take a practice spot, roster or not.
 
 **Mobile first, genuinely.** Hero video only mounts >=768px and when reduced-motion
 is off — phones get the poster. Most RSVPs happen on a phone between classes.
@@ -60,20 +66,17 @@ is off — phones get the poster. Most RSVPs happen on a phone between classes.
 
 | Role | Who | Can |
 |---|---|---|
-| `member` | Any approved @berkeley.edu | RSVP, register for tournaments, report own scores |
+| `member` | Any approved account, roster or not | RSVP, register for tournaments, report own scores |
 | `exec` | Board members | Create/edit events, view roster + private notes, run tournaments |
 | `admin` | chdeng@berkeley.edu, pickleballatberkeley@gmail.com | Everything + approve match scores + assign roles |
 
 Seeded from `ADMIN_EMAILS` / `EXEC_EMAILS` env vars so there's no chicken-and-egg
 on first deploy.
 
-**The club account is a plain @gmail.com, not a Workspace account.** That means the
-auth gate cannot be domain-only:
-
-```
-allow if  hd === "berkeley.edu"        // verified server-side, not the client param
-      or  email in ALLOWLIST_EMAILS    // club gmail + any non-berkeley exec
-```
+**The club account is a plain @gmail.com, not a Workspace account.** That's one
+reason sign-in was never domain-restricted — the club's own account couldn't have
+passed a domain-only gate. It's in `ADMIN_EMAILS` instead, which always
+auto-approves regardless of domain.
 
 ## Intramural tournament — design notes
 

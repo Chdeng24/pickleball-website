@@ -24,6 +24,14 @@ export async function blockMember(memberId: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** Gates registration for competitive-only tournaments — a roster designation, not a security role, so exec (not just admin) can set it. */
+export async function setCompetitiveTeam(memberId: string, on: boolean): Promise<ActionResult> {
+  await requireExec();
+  await db().update(schema.users).set({ onCompetitiveTeam: on }).where(eq(schema.users.id, memberId));
+  revalidatePath(`/exec/members/${memberId}`);
+  return { ok: true };
+}
+
 const bulkSchema = z.object({ memberIds: z.array(z.string().uuid()).min(1) });
 
 export async function approveMembers(input: unknown): Promise<ActionResult> {

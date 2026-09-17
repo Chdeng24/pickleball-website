@@ -34,10 +34,14 @@ npx auth secret          # writes AUTH_SECRET
 
 Then fill in `DATABASE_URL`, `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`.
 
-`ADMIN_EMAILS` and `ALLOWLIST_EMAILS` are pre-filled with your address and the
-club Gmail. The club Gmail **must** stay in `ALLOWLIST_EMAILS` — it is not an
-`@berkeley.edu` address, so it cannot pass the domain gate on its own and would
-otherwise be locked out of its own admin panel.
+`ADMIN_EMAILS` is pre-filled with your address and the club Gmail. Sign-in
+isn't restricted to `@berkeley.edu` — anyone with a verified Google account
+can sign in. What decides `pending` vs `approved` is `ROSTER_MODE`: in
+`strict` mode (the default), a roster email is only auto-approved if it's
+*also* on `ALLOWED_EMAIL_DOMAIN` — a sponsor or coach who ends up in the
+roster import still needs exec to approve them by hand. The club Gmail signs
+in the same way as any off-roster address would (it's in `ADMIN_EMAILS`
+instead, which is always auto-approved).
 
 ## 4. Import the roster
 

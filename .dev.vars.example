@@ -1,0 +1,21 @@
+# Local env for `npm run preview` (wrangler dev against the Cloudflare build).
+# `next dev` does not read this file — it reads `.env`. Wrangler does not read
+# `.env` — it reads this one. Copy to `.dev.vars` and fill in the same values
+# you already put in `.env`. See .env.example for what each var means.
+
+NEXTJS_ENV=development
+
+DATABASE_URL=""
+AUTH_SECRET=""
+AUTH_GOOGLE_ID=""
+AUTH_GOOGLE_SECRET=""
+
+ROSTER_MODE="strict"
+ALLOWED_EMAIL_DOMAIN="berkeley.edu"
+ADMIN_EMAILS="chdeng@berkeley.edu,pickleballatberkeley@gmail.com"
+EXEC_EMAILS=""
+
+RESEND_API_KEY=""
+EMAIL_FROM="Pickleball at Berkeley <onboarding@resend.dev>"
+
+CRON_SECRET=""

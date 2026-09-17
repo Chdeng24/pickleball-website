@@ -13,43 +13,37 @@ export function normalizeEmail(email: string): string {
 /**
  * Gate 1 — may this Google account sign in at all?
  *
- * The `hd` claim is read from the verified ID token, NOT from the `hd` request
- * parameter: that parameter is only a UI hint and is trivially bypassed. The
- * allowlist covers the club Gmail and any exec who isn't on a Berkeley address.
+ * Not domain-restricted: membership isn't limited to @berkeley.edu, so any
+ * verified Google account may sign in. Gate 2 (`initialAccess`) is what
+ * actually decides access — on the roster gets in immediately, everyone else
+ * waits in `pending` for exec to approve them.
  */
 export function canSignIn(params: {
   email: string | null | undefined;
   emailVerified: boolean;
-  hd: string | null | undefined;
-  allowedDomain: string;
-  allowlist: string[];
 }): boolean {
-  const { email, emailVerified, hd, allowedDomain, allowlist } = params;
-  if (!email || !emailVerified) return false;
-
-  const normalized = normalizeEmail(email);
-  if (allowlist.includes(normalized)) return true;
-
-  // Require both the hosted-domain claim and a matching address suffix.
-  const domainOk = hd?.toLowerCase() === allowedDomain.toLowerCase();
-  const suffixOk = normalized.endsWith(`@${allowedDomain.toLowerCase()}`);
-  return domainOk && suffixOk;
+  const { email, emailVerified } = params;
+  return Boolean(email && emailVerified);
 }
 
 /**
  * Gate 2 — what access does this person get on first sign-in?
  *
- * strict: only emails from the imported roster CSV are approved. Everyone else
- *         can sign in and see a "request access" screen, but cannot RSVP or
- *         register for tournaments until exec approves them. This is the
- *         "only emails in the file can join" behaviour, with an escape hatch
- *         so a new member isn't hard-locked out at 9pm the night before practice.
- * open:   any verified address on the allowed domain is approved immediately.
+ * strict: auto-approved only if BOTH true — on the imported roster CSV, AND a
+ *         verified @<allowedDomain> address. A roster email on some other
+ *         domain (a sponsor or coach who ended up in the import) still lands
+ *         in `pending` for a human to approve — being on the list alone isn't
+ *         enough. Everyone else (on-domain but off-roster, or off-domain and
+ *         off-roster) also lands in `pending`, with the same escape hatch so
+ *         a new member isn't hard-locked out at 9pm the night before practice.
+ * open:   any verified account is approved immediately, roster or domain
+ *         doesn't matter.
  */
 export function initialAccess(params: {
   email: string;
   onRoster: boolean;
   rosterMode: "strict" | "open";
+  allowedDomain: string;
   adminEmails: string[];
   execEmails: string[];
 }): { role: Role; status: MemberStatus; onRoster: boolean } {
@@ -61,11 +55,11 @@ export function initialAccess(params: {
       ? "exec"
       : "member";
 
+  const onAllowedDomain = email.endsWith(`@${params.allowedDomain.toLowerCase()}`);
+  const autoApproved = params.rosterMode === "open" || (params.onRoster && onAllowedDomain);
+
   // Exec and admin are always approved — they can't be locked out of their own site.
-  const status: MemberStatus =
-    role !== "member" || params.onRoster || params.rosterMode === "open"
-      ? "approved"
-      : "pending";
+  const status: MemberStatus = role !== "member" || autoApproved ? "approved" : "pending";
 
   return { role, status, onRoster: params.onRoster };
 }

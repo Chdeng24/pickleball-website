@@ -4,9 +4,13 @@ import { and, eq } from "drizzle-orm";
 import { CalendarDays, MapPin } from "lucide-react";
 import { db, schema } from "@/db";
 import { getSessionUser } from "@/lib/session";
+import { isActiveMember } from "@/lib/access";
 import { formatEventWhen } from "@/lib/dates";
 import { checkRsvpWindow } from "@/lib/rsvp-logic";
 import { Kicker } from "@/components/ui/kicker";
+import { MemberShell } from "@/components/site/member-shell";
+import { Header } from "@/components/site/header";
+import { Footer } from "@/components/site/footer";
 import { RsvpControl } from "./rsvp-control";
 
 export async function generateMetadata({
@@ -46,7 +50,7 @@ export default async function EventDetailPage({ params }: PageProps<"/events/[id
   const gate = checkRsvpWindow(event, new Date());
   const windowState = gate.ok ? "open" : gate.reason === "not_open" || gate.reason === "past" ? gate.reason : "not_published";
 
-  return (
+  const body = (
     <div className="mx-auto max-w-xl">
       <Kicker>{event.type}</Kicker>
       <h1 className="mt-3 font-display text-3xl font-extrabold uppercase text-navy-900 sm:text-4xl">
@@ -78,5 +82,17 @@ export default async function EventDetailPage({ params }: PageProps<"/events/[id
         />
       </div>
     </div>
+  );
+
+  if (user && isActiveMember(user)) {
+    return <MemberShell user={user}>{body}</MemberShell>;
+  }
+
+  return (
+    <>
+      <Header user={user} />
+      <main className="flex-1 pt-28 pb-20 sm:pt-32">{body}</main>
+      <Footer />
+    </>
   );
 }

@@ -51,6 +51,10 @@ export const users = pgTable("user", {
   derivedLevel: levelEnum("derived_level").notNull().default("unknown"),
   /** True when the email came from a roster CSV rather than self-signup. */
   onRoster: boolean("on_roster").notNull().default(false),
+  /** Self-reported link to their DUPR profile — never verified, just a link. */
+  duprUrl: text("dupr_url"),
+  /** Exec-assigned. Gates registration for competitive-only tournaments. */
+  onCompetitiveTeam: boolean("on_competitive_team").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -126,6 +130,8 @@ export const events = pgTable("event", {
   cancelDeadline: timestamp("cancel_deadline", { withTimezone: true }),
   /** Event id on the club's Google Calendar, for attendee sync. */
   gcalEventId: text("gcal_event_id"),
+  /** Set once the 24h-before reminder email has gone out — never send it twice. */
+  reminder24hSentAt: timestamp("reminder_24h_sent_at", { withTimezone: true }),
   published: boolean("published").notNull().default(false),
   createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -158,6 +164,11 @@ export const tournamentKindEnum = pgEnum("tournament_kind", [
   "one_day",
 ]);
 export const divisionEnum = pgEnum("division", ["beginner", "advanced"]);
+/** all = any approved member can register. competitive_only = users.onCompetitiveTeam must be true. */
+export const tournamentEligibilityEnum = pgEnum("tournament_eligibility", [
+  "all",
+  "competitive_only",
+]);
 export const tournamentStatusEnum = pgEnum("tournament_status", [
   "draft",
   "registration",
@@ -191,6 +202,7 @@ export const tournaments = pgTable("tournament", {
   name: text("name").notNull(),
   kind: tournamentKindEnum("kind").notNull(),
   division: divisionEnum("division").notNull(),
+  eligibility: tournamentEligibilityEnum("eligibility").notNull().default("all"),
   status: tournamentStatusEnum("status").notNull().default("draft"),
   registrationClosesAt: timestamp("registration_closes_at", { withTimezone: true }),
   /** Teams per pool. 8 gives each team 7 round-robin matches. */
@@ -207,6 +219,12 @@ export const tournaments = pgTable("tournament", {
   knockoutStartsAt: timestamp("knockout_starts_at", { withTimezone: true }),
   /** Hours the other players have to dispute before a score auto-confirms. */
   autoconfirmHours: integer("autoconfirm_hours").notNull().default(24),
+  /**
+   * Set once exec publishes the draw. Before this, pools/matches are a draft
+   * only exec can see and freely edit (move teams, drop teams, regenerate).
+   * After, they're locked, teams have been emailed, and weekly nudges start.
+   */
+  poolsAnnouncedAt: timestamp("pools_announced_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -263,6 +281,8 @@ export const matches = pgTable("match", {
   /** Where the winner lands. Null for pool matches and the final. */
   nextMatchId: uuid("next_match_id"),
   nextSlot: integer("next_slot"),
+  /** Last time the weekly Sunday nudge mentioned this match. Caps it at once/week. */
+  lastNudgedAt: timestamp("last_nudged_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
