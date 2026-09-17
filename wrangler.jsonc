@@ -2,6 +2,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"main": ".open-next/worker.js",
 	"name": "pickleball-website",
+	"account_id": "218d373fd53b3c1165edcffdea84c16a",
 	"compatibility_date": "2026-09-15",
 	"compatibility_flags": [
 		"nodejs_compat",

@@ -52,13 +52,30 @@ you haven't attached a custom domain yet.
 
 ## 4. Deploy
 
-```bash
-npm run deploy    # next build -> opennextjs-cloudflare build -> wrangler deploy
-```
+**Recommended: let GitHub deploy it, not your laptop.** The upload to
+Cloudflare is large enough that flaky wifi (campus networks especially) can
+time it out repeatedly. A GitHub Actions deploy runs from GitHub's servers
+instead, and re-deploys automatically on every push to `main`.
 
-First deploy prints a `*.workers.dev` URL. Attach a real domain afterward in
-the Cloudflare dashboard under Workers & Pages -> your worker -> Settings ->
-Domains & Routes.
+1. Cloudflare dashboard -> profile icon (top right) -> **My Profile -> API
+   Tokens -> Create Token** -> use the **"Edit Cloudflare Workers"** template
+   -> Continue -> Create Token -> copy it.
+2. Your GitHub repo -> **Settings -> Secrets and variables -> Actions** -> add
+   a secret named `CLOUDFLARE_API_TOKEN` with that value.
+3. Push to `main` (or Actions tab -> "Deploy to Cloudflare" -> Run workflow).
+   `.github/workflows/deploy.yml` handles the rest.
+
+First deploy prints a `*.workers.dev` URL in the Actions run log. Attach a
+real domain afterward in the Cloudflare dashboard under Workers & Pages ->
+your worker -> Settings -> Domains & Routes.
+
+**If you still want to deploy from your own machine** (e.g. to test before
+pushing), skip the flaky cache pre-warm step that `npm run deploy` includes:
+
+```bash
+npx opennextjs-cloudflare build
+npx wrangler deploy
+```
 
 ## 5. Local preview against the Cloudflare build (optional)
 
