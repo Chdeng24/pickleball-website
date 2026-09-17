@@ -14,16 +14,7 @@ What's left is the parts that need a real Cloudflare account.
 2. `npx wrangler login` — opens a browser, authorizes this machine against that
    account.
 
-## 2. Create the R2 bucket
-
-The app caches rendered pages in R2 (`open-next.config.ts` / `wrangler.jsonc`
-already point at it — see `NEXT_INC_CACHE_R2_BUCKET`).
-
-```bash
-npx wrangler r2 bucket create pickleball-website-cache
-```
-
-## 3. Set secrets
+## 2. Set secrets
 
 Every var in `.env` needs to exist as a Worker secret too — `.env` never leaves
 your machine, Cloudflare only sees what you push explicitly:
@@ -50,12 +41,18 @@ Also add the production redirect URI in the Google Cloud OAuth client
 `https://YOURDOMAIN/api/auth/callback/google` — or the `workers.dev` URL if
 you haven't attached a custom domain yet.
 
+## 3. Register a workers.dev subdomain (one-time)
+
+Cloudflare dashboard → **Workers & Pages** → if you haven't already, it'll
+prompt you to pick a subdomain (e.g. `yourclub.workers.dev`) before your
+first Worker URL actually resolves. Do this once, first, or the deploy
+"succeeds" but the URL 404s/doesn't connect.
+
 ## 4. Deploy
 
-**Recommended: let GitHub deploy it, not your laptop.** The upload to
-Cloudflare is large enough that flaky wifi (campus networks especially) can
-time it out repeatedly. A GitHub Actions deploy runs from GitHub's servers
-instead, and re-deploys automatically on every push to `main`.
+**Recommended: let GitHub deploy it, not your laptop.** A GitHub Actions
+deploy runs from GitHub's servers and re-deploys automatically on every push
+to `main`.
 
 1. Cloudflare dashboard -> profile icon (top right) -> **My Profile -> API
    Tokens -> Create Token** -> use the **"Edit Cloudflare Workers"** template
@@ -70,12 +67,15 @@ real domain afterward in the Cloudflare dashboard under Workers & Pages ->
 your worker -> Settings -> Domains & Routes.
 
 **If you still want to deploy from your own machine** (e.g. to test before
-pushing), skip the flaky cache pre-warm step that `npm run deploy` includes:
+pushing):
 
 ```bash
 npx opennextjs-cloudflare build
 npx wrangler deploy
 ```
+
+(`npm run deploy` also works now — the R2 cache pre-warm step that used to
+hang has been removed entirely, see "Not yet built" below.)
 
 ## 5. Local preview against the Cloudflare build (optional)
 
@@ -90,11 +90,11 @@ npm run preview                   # builds, then runs it under wrangler dev
 ## 6. Event reminder emails (24h before)
 
 RSVP confirmation and waitlist-promotion emails already fire automatically —
-no setup needed beyond step 3. The 24h-before reminder is different: Cloudflare
+no setup needed beyond step 2. The 24h-before reminder is different: Cloudflare
 Workers has no built-in "run this every hour" for this kind of app, so
 something outside the app has to call `/api/cron/event-reminders` on a
 schedule. That route is protected by the `CRON_SECRET` you already set in
-step 3 — without the right bearer token it just refuses.
+step 2 — without the right bearer token it just refuses.
 
 Easiest free option, using GitHub Actions (works once the repo is on GitHub):
 

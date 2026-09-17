@@ -1,8 +1,8 @@
-// default open-next.config.ts file created by @opennextjs/cloudflare
 import { defineCloudflareConfig } from "@opennextjs/cloudflare";
-import r2IncrementalCache from "@opennextjs/cloudflare/overrides/incremental-cache/r2-incremental-cache";
 
-export default defineCloudflareConfig({
-	// Requires the NEXT_INC_CACHE_R2_BUCKET binding in wrangler.jsonc — see DEPLOY.md
-	incrementalCache: r2IncrementalCache,
-});
+// No R2 incremental cache — nearly every route here is dynamic (session-aware
+// layouts, live DB reads), so there's almost nothing for it to cache, and its
+// deploy-time cache pre-warm step was reliably timing out (reproduced across
+// three different networks, including GitHub Actions' own runners — not a
+// wifi issue). Defaults to the in-memory cache instead.
+export default defineCloudflareConfig({});

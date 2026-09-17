@@ -20,13 +20,6 @@
 			"service": "pickleball-website"
 		}
 	],
-	"r2_buckets": [
-		// ISR/route cache. Create with: wrangler r2 bucket create pickleball-website-cache
-		{
-			"binding": "NEXT_INC_CACHE_R2_BUCKET",
-			"bucket_name": "pickleball-website-cache"
-		}
-	],
 	"images": {
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image
