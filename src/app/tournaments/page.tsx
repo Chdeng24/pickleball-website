@@ -32,7 +32,7 @@ const howItWorks = [
   {
     icon: Trophy,
     title: "Get drawn into a pool",
-    body: "Once registration closes you're placed in a pool of 8 teams, in either the Beginner or Advanced division.",
+    body: "Once registration closes you're placed in a pool with a few other teams in your division — pool sizes scale to however many sign up.",
   },
   {
     icon: CalendarClock,
@@ -41,8 +41,8 @@ const howItWorks = [
   },
   {
     icon: ClipboardCheck,
-    title: "Top 3 make playoffs",
-    body: "Any one of the four players reports each score. Standings update live, and the top 3 from each pool move into a single-elimination bracket.",
+    title: "Standings update live",
+    body: "Any one of the four players reports each score. Standings update live as results come in — final placement decides seeding for what comes next.",
   },
 ];
 
