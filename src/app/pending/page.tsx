@@ -34,8 +34,8 @@ export default async function PendingPage() {
             Almost there, {user.name?.split(" ")[0] ?? "there"}
           </h1>
           <p className="mt-4 text-center text-sm leading-relaxed text-white/65">
-            Your Berkeley account is verified, but you&apos;re not on the club
-            roster yet. Once an officer approves you, RSVPs and events unlock
+            Your account is verified, but you&apos;re not on the club roster
+            yet. Once an officer approves you, RSVPs and events unlock
             automatically — no need to sign in again.
           </p>
 

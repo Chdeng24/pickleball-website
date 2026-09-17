@@ -11,6 +11,8 @@ export type SessionUser = {
   role: Role;
   status: MemberStatus;
   derivedLevel: "unknown" | "beginner" | "advanced";
+  duprUrl: string | null;
+  onCompetitiveTeam: boolean;
 };
 
 /** Read-only — returns null when signed out. Never redirects. */

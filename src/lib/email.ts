@@ -80,6 +80,17 @@ export async function sendWaitlistPromoted(to: Recipient, event: EventLike): Pro
   await sendEmail(to.email, `You're in: ${event.title}`, html);
 }
 
+export async function sendEventReminder(to: Recipient, event: EventLike): Promise<void> {
+  const html = layout(
+    `${event.title} is coming up.`,
+    `<p>Hey ${to.name?.split(" ")[0] ?? "there"},</p>
+     <p>Reminder — you're confirmed for this tomorrow:</p>
+     ${eventDetailsHtml(event)}
+     <p>See you there.</p>`,
+  );
+  await sendEmail(to.email, `Reminder: ${event.title} is tomorrow`, html);
+}
+
 export async function sendEventCancelled(to: Recipient, event: EventLike): Promise<void> {
   const html = layout(
     `${event.title} has been cancelled.`,
@@ -89,4 +100,94 @@ export async function sendEventCancelled(to: Recipient, event: EventLike): Promi
      <p>Sorry for the short notice — check the site for updates.</p>`,
   );
   await sendEmail(to.email, `Cancelled: ${event.title}`, html);
+}
+
+/* ─── Social Team League ─────────────────────────────────────────────────── */
+
+export async function sendPartnerInvite(
+  to: Recipient,
+  { captainName, tournamentName }: { captainName: string | null; tournamentName: string },
+): Promise<void> {
+  const html = layout(
+    `${captainName ?? "Someone"} wants you as their partner.`,
+    `<p>Hey ${to.name?.split(" ")[0] ?? "there"},</p>
+     <p><strong>${captainName ?? "A teammate"}</strong> invited you to team up for the
+     <strong>${tournamentName}</strong>.</p>
+     <p>Sign in and check the Tournaments tab to accept or decline.</p>`,
+  );
+  await sendEmail(to.email, `Team invite: ${tournamentName}`, html);
+}
+
+export async function sendPoolsAnnounced(
+  to: Recipient,
+  {
+    tournamentName,
+    teamName,
+    pool,
+    opponents,
+  }: { tournamentName: string; teamName: string; pool: string; opponents: (string | null)[] },
+): Promise<void> {
+  const list = opponents.length
+    ? `<ul style="margin:8px 0 0;padding-left:20px;">${opponents
+        .map((o) => `<li>${o ?? "TBD"}</li>`)
+        .join("")}</ul>`
+    : `<p style="margin:8px 0 0;color:#4b5566;">No other teams in your pool yet.</p>`;
+  const html = layout(
+    `${teamName} is in Pool ${pool}.`,
+    `<p>Hey ${to.name?.split(" ")[0] ?? "there"},</p>
+     <p><strong>${teamName}</strong> is in <strong>Pool ${pool}</strong> for the
+     ${tournamentName}. You'll play everyone in your pool once, on your own schedule:</p>
+     ${list}
+     <p>Watch for a weekly reminder with whichever match is still unplayed — get them scheduled early.</p>`,
+  );
+  await sendEmail(to.email, `${tournamentName}: you're in Pool ${pool}`, html);
+}
+
+export async function sendScoreReported(
+  to: Recipient,
+  { tournamentName, reporterName, summary }: { tournamentName: string; reporterName: string | null; summary: string },
+): Promise<void> {
+  const html = layout(
+    `A score was reported for your match.`,
+    `<p>Hey ${to.name?.split(" ")[0] ?? "there"},</p>
+     <p><strong>${reporterName ?? "Someone"}</strong> reported this result in the
+     ${tournamentName}:</p>
+     <div style="margin:16px 0;padding:14px 16px;background:#f6f7f9;border-left:4px solid #fdb515;">
+       <p style="margin:0;font-weight:700;">${summary}</p>
+     </div>
+     <p>It auto-confirms soon unless someone disputes it from the Tournaments tab.</p>`,
+  );
+  await sendEmail(to.email, `Score reported: ${tournamentName}`, html);
+}
+
+/** The Sunday nudge — reminds a team of their next unplayed match, with a friendly line about their last result if they have one. */
+export async function sendWeeklyNudge(
+  to: Recipient,
+  {
+    tournamentName,
+    teamName,
+    opponentName,
+    lastResult,
+  }: {
+    tournamentName: string;
+    teamName: string;
+    opponentName: string | null;
+    lastResult: { won: boolean; opponentName: string | null } | null;
+  },
+): Promise<void> {
+  const friendlyLine = lastResult
+    ? lastResult.won
+      ? `<p>🎉 Nice win last time out against ${lastResult.opponentName ?? "your opponent"} — keep it rolling.</p>`
+      : `<p>Tough one last time against ${lastResult.opponentName ?? "your opponent"} — get 'em this week.</p>`
+    : "";
+  const html = layout(
+    `Your next ${tournamentName} match is still unplayed.`,
+    `<p>Hey ${to.name?.split(" ")[0] ?? "there"},</p>
+     <p><strong>${teamName}</strong> still has a match to play against
+     <strong>${opponentName ?? "your remaining opponent"}</strong> in the ${tournamentName}.</p>
+     <p>Get a time on the calendar this week, and report the score from the Tournaments tab
+     once you're done.</p>
+     ${friendlyLine}`,
+  );
+  await sendEmail(to.email, `Reminder: schedule your ${tournamentName} match`, html);
 }

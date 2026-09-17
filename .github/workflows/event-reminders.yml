@@ -1,0 +1,19 @@
+name: Hourly reminders
+
+on:
+  schedule:
+    - cron: "0 * * * *" # every hour
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger 24h event reminder check
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/event-reminders" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
+      - name: Auto-confirm due tournament match reports
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/tournament-autoconfirm" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

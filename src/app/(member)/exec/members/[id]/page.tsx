@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { desc, eq } from "drizzle-orm";
+import { ArrowLeft } from "lucide-react";
 import { requireExec } from "@/lib/session";
 import { isAdmin } from "@/lib/access";
 import { db, schema } from "@/db";
 import { formatEventWhen } from "@/lib/dates";
 import { NoteForm } from "./note-form";
 import { RoleSelect } from "./role-select";
+import { CompetitiveToggle } from "./competitive-toggle";
 
 export const metadata: Metadata = { title: "Member Profile" };
 
@@ -36,6 +39,12 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
 
   return (
     <div className="space-y-10">
+      <Link
+        href="/exec/members"
+        className="inline-flex items-center gap-1.5 text-sm font-semibold text-navy-800 underline underline-offset-2"
+      >
+        <ArrowLeft size={14} /> Back to members
+      </Link>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="font-display text-3xl font-extrabold uppercase text-navy-900">
@@ -43,13 +52,16 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
           </h1>
           <p className="mt-1 text-sm text-ink/50">{member.email}</p>
         </div>
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-ink/50">Role</span>
-          {isAdmin(viewer) ? (
-            <RoleSelect memberId={member.id} role={member.role} />
-          ) : (
-            <span className="capitalize font-semibold text-navy-900">{member.role}</span>
-          )}
+        <div className="flex flex-col items-end gap-3">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="text-ink/50">Role</span>
+            {isAdmin(viewer) ? (
+              <RoleSelect memberId={member.id} role={member.role} />
+            ) : (
+              <span className="capitalize font-semibold text-navy-900">{member.role}</span>
+            )}
+          </div>
+          <CompetitiveToggle memberId={member.id} on={member.onCompetitiveTeam} />
         </div>
       </div>
 

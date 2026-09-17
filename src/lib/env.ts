@@ -18,24 +18,26 @@ const schema = z.object({
   AUTH_GOOGLE_ID: z.string().min(1),
   AUTH_GOOGLE_SECRET: z.string().min(1),
 
-  /** Domain members sign in from. Verified against the Google `hd` claim. */
-  ALLOWED_EMAIL_DOMAIN: z.string().default("berkeley.edu"),
-
   /**
-   * strict — only emails on the imported roster get approved; everyone else
-   *          lands in `pending` and exec approves with one click.
-   * open   — any verified @berkeley.edu is approved on first sign-in.
+   * strict — auto-approved only if BOTH on the roster AND on ALLOWED_EMAIL_DOMAIN;
+   *          everyone else (including an off-domain roster entry — a sponsor,
+   *          a coach) lands in `pending` for exec to approve with one click.
+   * open   — any verified account is approved on first sign-in, roster or not.
    */
   ROSTER_MODE: z.enum(["strict", "open"]).default("strict"),
 
-  /** Non-Berkeley addresses allowed through the domain gate (club Gmail, exec). */
-  ALLOWLIST_EMAILS: emailList,
+  /** Domain the roster auto-approve bypass checks. Not a sign-in restriction — see canSignIn(). */
+  ALLOWED_EMAIL_DOMAIN: z.string().default("berkeley.edu"),
+
   ADMIN_EMAILS: emailList,
   EXEC_EMAILS: emailList,
 
   // Optional in dev — unset means emails log to the console instead of sending.
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default("Pickleball at Berkeley <onboarding@resend.dev>"),
+
+  /** Bearer token the event-reminder cron endpoint checks. Unset = endpoint always refuses. */
+  CRON_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof schema>;

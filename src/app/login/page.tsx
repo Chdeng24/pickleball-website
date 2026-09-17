@@ -11,8 +11,7 @@ export const metadata: Metadata = { title: "Member Login" };
 
 /** Auth.js error codes mapped to copy a member will actually understand. */
 const ERROR_MESSAGES: Record<string, string> = {
-  AccessDenied:
-    "That account isn't eligible. Sign in with your @berkeley.edu address.",
+  AccessDenied: "That account isn't eligible to sign in. Please try again.",
   Configuration: "Sign-in is temporarily unavailable. Please try again shortly.",
   Verification: "That sign-in link has expired. Please try again.",
 };
@@ -51,8 +50,9 @@ export default async function LoginPage({
             Member login
           </h1>
           <p className="mt-4 text-center text-sm leading-relaxed text-white/60">
-            Members sign in with their UC Berkeley Google account. Access is
-            limited to students on the club roster.
+            Sign in with Google. Members on the club roster get in
+            immediately — anyone else lands on a pending screen until exec
+            approves them.
           </p>
 
           {errorMessage && (
@@ -65,8 +65,7 @@ export default async function LoginPage({
 
           <p className="mt-8 flex items-start gap-2.5 border-t border-white/10 pt-6 text-xs leading-relaxed text-white/40">
             <ShieldCheck size={15} className="mt-0.5 shrink-0 text-gold-500" />
-            Only @berkeley.edu accounts on the approved roster can access member
-            pages and RSVP.
+            Only approved members can access member pages and RSVP.
           </p>
         </div>
       </Container>

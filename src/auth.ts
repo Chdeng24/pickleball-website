@@ -13,6 +13,8 @@ declare module "next-auth" {
       role: Role;
       status: MemberStatus;
       derivedLevel: "unknown" | "beginner" | "advanced";
+      duprUrl: string | null;
+      onCompetitiveTeam: boolean;
       name?: string | null;
       email?: string | null;
       image?: string | null;
@@ -43,9 +45,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
         clientSecret: e.AUTH_GOOGLE_SECRET,
         authorization: {
           params: {
-            // UI hint only — Google pre-filters the account chooser. The real
-            // check happens in signIn() against the verified ID token claim.
-            hd: e.ALLOWED_EMAIL_DOMAIN,
+            // No `hd` param here on purpose — it doesn't just hint Google's
+            // account picker, it can restrict it to that domain, which would
+            // block the non-Berkeley emails (sponsors, coaches, alumni) this
+            // club explicitly wants to let request access.
             prompt: "select_account",
           },
         },
@@ -57,9 +60,6 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
         return canSignIn({
           email: profile?.email,
           emailVerified: Boolean(profile?.email_verified),
-          hd: (profile as { hd?: string } | undefined)?.hd,
-          allowedDomain: e.ALLOWED_EMAIL_DOMAIN,
-          allowlist: e.ALLOWLIST_EMAILS,
         });
       },
 
@@ -68,13 +68,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
         // effect on the next request, not at the next login.
         const row = await db().query.users.findFirst({
           where: eq(schema.users.id, user.id),
-          columns: { role: true, status: true, derivedLevel: true },
+          columns: { role: true, status: true, derivedLevel: true, duprUrl: true, onCompetitiveTeam: true },
         });
 
         session.user.id = user.id;
         session.user.role = row?.role ?? "member";
         session.user.status = row?.status ?? "pending";
         session.user.derivedLevel = row?.derivedLevel ?? "unknown";
+        session.user.duprUrl = row?.duprUrl ?? null;
+        session.user.onCompetitiveTeam = row?.onCompetitiveTeam ?? false;
         return session;
       },
     },
@@ -93,6 +95,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
           email,
           onRoster: Boolean(roster),
           rosterMode: e.ROSTER_MODE,
+          allowedDomain: e.ALLOWED_EMAIL_DOMAIN,
           adminEmails: e.ADMIN_EMAILS,
           execEmails: e.EXEC_EMAILS,
         });

@@ -1,0 +1,15 @@
+name: Weekly Social Team League nudges
+
+on:
+  schedule:
+    - cron: "0 16 * * 0" # every Sunday, 4pm UTC (~8-9am Pacific)
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger weekly pairing reminder emails
+        run: |
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/weekly-nudges" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

@@ -52,7 +52,7 @@ export default async function TeamPage({ params }: PageProps<"/teams/[slug]">) {
         </Section>
       )}
 
-      <JoinCta />
+      {team.slug !== "competitive" && <JoinCta />}
     </>
   );
 }

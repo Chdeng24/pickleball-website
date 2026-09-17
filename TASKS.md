@@ -493,8 +493,15 @@ into single elimination.** Two divisions, Beginner and Advanced.
    exist is a *build* error, not a 404. Create the page before linking to it.
 4. **`env()` is a function, not an object.** Call `env().DATABASE_URL`. It is
    lazy on purpose — `next build` prerenders public pages with no secrets set.
-5. **The club Gmail is not `@berkeley.edu`.** It must stay in
-   `ALLOWLIST_EMAILS` or it cannot log into its own admin panel.
+5. **Sign-in is not domain-restricted, but auto-approval is.** `canSignIn`
+   only checks that Google verified the email — any account can sign in,
+   roster or not, Berkeley or not. This is also why the club Gmail (not
+   `@berkeley.edu`) can log into its own admin panel — it's in `ADMIN_EMAILS`,
+   which always auto-approves regardless of domain. But `initialAccess`
+   (strict mode) only auto-approves a roster email if it's *also* on
+   `ALLOWED_EMAIL_DOMAIN` — a roster entry on some other domain (a sponsor, a
+   coach who ended up in the CSV) still lands in `pending` for a human to
+   approve. Being on the roster alone isn't enough.
 6. **Test imports need the `.ts` extension** (`from "./access.ts"`) because
    `node --test` runs them as real ESM.
 7. **Never trust hidden UI for authorization.** Re-check `requireExec()` /

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { eq } from "drizzle-orm";
-import { CalendarDays, Users } from "lucide-react";
+import { CalendarDays, Trophy, Users } from "lucide-react";
 import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
 
@@ -25,6 +25,12 @@ export default async function ExecHomePage() {
       title: "Members",
       body: pendingCount > 0 ? `${pendingCount} waiting for approval` : "Roster and exec notes",
       badge: pendingCount > 0 ? pendingCount : undefined,
+    },
+    {
+      href: "/exec/tournaments",
+      icon: Trophy,
+      title: "Tournaments",
+      body: "Pickleball League draws, pools, and disputes.",
     },
   ];
 

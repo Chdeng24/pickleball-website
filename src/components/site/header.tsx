@@ -3,17 +3,25 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { nav, club } from "@/lib/content";
 import { Container } from "@/components/ui/container";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { SessionUser } from "@/lib/session";
 
-export function Header() {
+/** Active if this is the current page, or the current page is nested under it (e.g. /teams/social under /teams). */
+function isActivePath(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+export function Header({ user }: { user: SessionUser | null }) {
   // Transparent over the hero, solid once the user scrolls past it.
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -62,13 +70,18 @@ export function Header() {
               <Link
                 key={item.href}
                 href={item.href}
-                className="font-display text-xs font-semibold uppercase tracking-[0.14em] text-white/80 transition-colors hover:text-gold-500"
+                className={cn(
+                  "font-display text-xs uppercase tracking-[0.14em] transition-colors hover:text-gold-500",
+                  isActivePath(pathname, item.href)
+                    ? "font-extrabold text-gold-500"
+                    : "font-semibold text-white/80",
+                )}
               >
                 {item.label}
               </Link>
             ))}
-            <Button href="/login" variant="gold" size="sm">
-              Member Login
+            <Button href={user ? "/dashboard" : "/login"} variant="gold" size="sm">
+              {user ? "Dashboard" : "Member Login"}
             </Button>
           </nav>
 
@@ -100,13 +113,23 @@ export function Header() {
                     key={item.href}
                     href={item.href}
                     onClick={() => setOpen(false)}
-                    className="border-b border-white/10 py-4 font-display text-lg font-bold uppercase tracking-tight text-white transition-colors hover:text-gold-500"
+                    className={cn(
+                      "border-b border-white/10 py-4 font-display text-lg uppercase tracking-tight transition-colors hover:text-gold-500",
+                      isActivePath(pathname, item.href)
+                        ? "font-extrabold text-gold-500"
+                        : "font-bold text-white",
+                    )}
                   >
                     {item.label}
                   </Link>
                 ))}
-                <Button href="/login" variant="gold" size="lg" className="mt-5 w-full">
-                  Member Login
+                <Button
+                  href={user ? "/dashboard" : "/login"}
+                  variant="gold"
+                  size="lg"
+                  className="mt-5 w-full"
+                >
+                  {user ? "Dashboard" : "Member Login"}
                 </Button>
                 <p className="py-5 text-center text-xs text-white/40">{club.email}</p>
               </nav>

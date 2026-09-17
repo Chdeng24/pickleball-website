@@ -50,7 +50,7 @@ export const practices: Practice[] = [
     id: "beginner",
     team: "social",
     title: "Beginner / Social Practice",
-    level: "New to 3.0",
+    level: "Beginner",
     day: "TODO — day", // TODO: confirm day
     time: "TODO — time", // TODO: confirm time
     location: venue.short,
@@ -61,7 +61,7 @@ export const practices: Practice[] = [
     id: "advanced",
     team: "social",
     title: "Advanced Practice",
-    level: "3.5+",
+    level: "Advanced",
     day: "TODO — day", // TODO: confirm day
     time: "TODO — time", // TODO: confirm time
     location: venue.short,
@@ -79,7 +79,7 @@ export const teams = [
       "Our largest community — 150+ members who play twice a week, hit socials, and keep things low-pressure. No tryouts, no experience required. Just show up, RSVP, and play.",
     highlights: [
       "Two weekly practices, beginner and advanced",
-      "Semester-long intramural doubles tournament",
+      "Semester-long Pickleball League doubles tournament",
       "Socials, fundraisers, and one-day tournaments",
       "First 20 to RSVP get a spot — court capacity",
     ],
@@ -102,9 +102,9 @@ export const teams = [
 /** The two flagship competitive programs open to all members. */
 export const tournamentPrograms = [
   {
-    id: "intramural",
+    id: "social-league",
     kicker: "Semester long",
-    name: "Intramural Doubles",
+    name: "Pickleball League",
     summary:
       "Grab a partner, register free, and get drawn into a pool of 8. You're guaranteed 7 matches against every other team in your pool — play them on your own schedule, then the top 3 advance to playoffs.",
     points: [
@@ -131,13 +131,22 @@ export const tournamentPrograms = [
   },
 ];
 
-// TODO: replace with real officers
 export const officers = [
-  { name: "TODO", role: "President", photo: null },
-  { name: "TODO", role: "Vice President", photo: null },
-  { name: "TODO", role: "Social Chair", photo: null },
-  { name: "TODO", role: "Competitive Captain", photo: null },
+  { name: "Sienna Lam", role: "President", year: "Senior", photo: null },
+  { name: "Jason Piech", role: "VP of External", year: "Sophomore", photo: null },
+  { name: "Eric Liang", role: "VP of Partnerships", year: "Senior", photo: null },
+  { name: "Will Chang", role: "Tournament Director", year: "Senior", photo: null },
+  { name: "Vinay Patel", role: "Social Media Director", year: "Sophomore", photo: null },
+  { name: "Kiara Eng", role: "VP of Internal", year: "Junior", photo: null },
+  { name: "Caleb Deng", role: "Social Team Director", year: "Junior", photo: null },
 ];
+
+/**
+ * Team/event photo album on the About page. Empty until you add some — to
+ * add one: drop the image file in `public/media/gallery/`, then add a line
+ * here, e.g. { src: "/media/gallery/fall-social.jpg", alt: "Fall social at Clark Kerr" }.
+ */
+export const galleryPhotos: { src: string; alt: string }[] = [];
 
 // TODO: replace with real sponsors as they come in
 export const sponsors = [
