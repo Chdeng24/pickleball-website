@@ -4,6 +4,7 @@ import { Check } from "lucide-react";
 import { Section } from "@/components/site/section";
 import { PracticeSchedule } from "@/components/site/practice-schedule";
 import { JoinCta } from "@/components/site/join-cta";
+import { TeamGallery } from "@/components/site/team-gallery";
 import { teams } from "@/lib/content";
 
 export function generateStaticParams() {
@@ -51,6 +52,12 @@ export default async function TeamPage({ params }: PageProps<"/teams/[slug]">) {
           <PracticeSchedule />
         </Section>
       )}
+
+      <Section tone="chalk" kicker="On the courts" title="The album">
+        <div className="mt-10">
+          <TeamGallery />
+        </div>
+      </Section>
 
       {team.slug !== "competitive" && <JoinCta />}
     </>

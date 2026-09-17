@@ -106,13 +106,12 @@ export const tournamentPrograms = [
     kicker: "Semester long",
     name: "Pickleball League",
     summary:
-      "Grab a partner, register free, and get drawn into a pool of 8. You're guaranteed 7 matches against every other team in your pool — play them on your own schedule, then the top 3 advance to playoffs.",
+      "Grab a partner, register free, and get drawn into a pool. You're guaranteed a match against every other team in your pool — play them on your own schedule, with standings updating live as scores come in.",
     points: [
-      "Two separate divisions — Beginner and Advanced",
+      "Beginner, Advanced, and Competitive-only divisions",
       "Find your own partner, or enter the free-agent pool",
-      "Pools of 8 — 7 guaranteed matches, best of 3",
-      "Play them in any order, whenever both pairs are free",
-      "Top 3 from each pool advance to single-elimination playoffs",
+      "Pool size scales to however many teams sign up",
+      "Play in any order, whenever both pairs are free",
       "Any one player reports the score; standings update instantly",
     ],
   },
