@@ -163,7 +163,7 @@ export const tournamentKindEnum = pgEnum("tournament_kind", [
   "im_semester",
   "one_day",
 ]);
-export const divisionEnum = pgEnum("division", ["beginner", "advanced"]);
+export const divisionEnum = pgEnum("division", ["beginner", "advanced", "competitive"]);
 /** all = any approved member can register. competitive_only = users.onCompetitiveTeam must be true. */
 export const tournamentEligibilityEnum = pgEnum("tournament_eligibility", [
   "all",

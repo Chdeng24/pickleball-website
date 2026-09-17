@@ -23,7 +23,7 @@ function friendly(e: unknown): string {
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(120),
-  division: z.enum(["beginner", "advanced"]),
+  division: z.enum(["beginner", "advanced", "competitive"]),
   eligibility: z.enum(["all", "competitive_only"]),
   poolSize: z.coerce.number().int().min(3).max(16),
   advancePerPool: z.coerce.number().int().min(1).max(8),

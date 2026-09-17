@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { createSocialLeagueTournament, type ActionResult } from "./actions";
 
@@ -21,6 +21,8 @@ function SubmitButton() {
 
 export function CreateTournamentForm() {
   const [state, action] = useActionState(createSocialLeagueTournament, initialState);
+  const eligibilityRef = useRef<HTMLSelectElement>(null);
+  const [division, setDivision] = useState("beginner");
 
   return (
     <form action={action} className="grid gap-5 pt-5 sm:grid-cols-2">
@@ -37,10 +39,20 @@ export function CreateTournamentForm() {
         <label className="text-xs font-semibold uppercase tracking-wide text-ink/50">Division</label>
         <select
           name="division"
+          value={division}
+          onChange={(e) => {
+            setDivision(e.target.value);
+            // Competitive division almost always means competitive-only signup —
+            // pre-select it, but exec can still change it right after.
+            if (e.target.value === "competitive" && eligibilityRef.current) {
+              eligibilityRef.current.value = "competitive_only";
+            }
+          }}
           className="h-11 w-full border-2 border-navy-900/15 bg-white px-3 text-sm text-ink focus:border-navy-800"
         >
           <option value="beginner">Beginner</option>
           <option value="advanced">Advanced</option>
+          <option value="competitive">Competitive</option>
         </select>
       </div>
 
@@ -48,6 +60,8 @@ export function CreateTournamentForm() {
         <label className="text-xs font-semibold uppercase tracking-wide text-ink/50">Who can join</label>
         <select
           name="eligibility"
+          ref={eligibilityRef}
+          defaultValue="all"
           className="h-11 w-full border-2 border-navy-900/15 bg-white px-3 text-sm text-ink focus:border-navy-800"
         >
           <option value="all">All members</option>
