@@ -18,7 +18,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://pickleballatberkeley.com"), // TODO: real domain
+  metadataBase: new URL("https://pickleballatberkeley.com"),
   title: {
     default: `${club.name} — ${club.tagline}`,
     template: `%s — ${club.name}`,
