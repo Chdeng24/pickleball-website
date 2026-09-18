@@ -135,7 +135,7 @@ export const officers = [
   { name: "Jason Piech", role: "VP of External", year: "Sophomore", photo: null },
   { name: "Eric Liang", role: "VP of Partnerships", year: "Senior", photo: null },
   { name: "Will Chang", role: "Tournament Director", year: "Senior", photo: null },
-  { name: "Vinay Patel", role: "Social Media Director", year: "Sophomore", photo: null },
+  { name: "Vinay Palta", role: "Social Media Director", year: "Sophomore", photo: null },
   { name: "Kiara Eng", role: "VP of Internal", year: "Junior", photo: null },
   { name: "Caleb Deng", role: "Social Team Director", year: "Junior", photo: null },
 ];
