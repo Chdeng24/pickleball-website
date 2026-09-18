@@ -47,6 +47,25 @@ export function formatEventTime(date: Date): string {
   return `${timeFmt.format(date)} ${tzLabel(date)}`;
 }
 
+const partsFmt = new Intl.DateTimeFormat("en-US", {
+  timeZone: TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/** The Pacific calendar date (year/month/day) an instant falls on — for placing an event on a calendar grid, not display. */
+export function pacificDateParts(date: Date): { year: number; month: number; day: number } {
+  const parts = Object.fromEntries(partsFmt.formatToParts(date).map((p) => [p.type, p.value]));
+  return { year: Number(parts.year), month: Number(parts.month), day: Number(parts.day) };
+}
+
+/** "2026-02-03" — sortable/comparable key for the Pacific calendar day an instant falls on. */
+export function pacificDateKey(date: Date): string {
+  const { year, month, day } = pacificDateParts(date);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 /** Group a list of events by their Pacific calendar day, preserving order. */
 export function groupByDay<T extends { startsAt: Date }>(events: T[]): [string, T[]][] {
   const groups = new Map<string, T[]>();
