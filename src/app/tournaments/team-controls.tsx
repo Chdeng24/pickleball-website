@@ -4,8 +4,11 @@ import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
 import { invitePartnerAction, leaveLeagueAction, type ActionResult } from "./actions";
+import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
+const safeInvite = safeAction(invitePartnerAction);
+const safeLeave = safeAction(leaveLeagueAction);
 
 function InviteSubmit() {
   const { pending } = useFormStatus();
@@ -22,7 +25,7 @@ function InviteSubmit() {
 
 /** For a team with no partner yet — or whose invite was declined or never answered. */
 export function InvitePartnerForm({ teamId, replacing }: { teamId: string; replacing: boolean }) {
-  const [state, action] = useActionState(invitePartnerAction, initialState);
+  const [state, action] = useActionState(safeInvite, initialState);
 
   return (
     <form action={action} className="space-y-2">
@@ -84,7 +87,7 @@ export function LeaveLeagueButton({ teamId, hasPartner }: { teamId: string; hasP
           disabled={pending}
           onClick={() =>
             startTransition(async () => {
-              const res = await leaveLeagueAction(teamId);
+              const res = await safeLeave(teamId);
               setArmed(false);
               if (!res.ok) setError(res.error ?? "Something went wrong.");
               else router.refresh();

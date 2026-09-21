@@ -7,7 +7,7 @@ import { requireMember } from "@/lib/session";
 import { db, schema } from "@/db";
 import { withTransaction } from "@/db/pool";
 import { checkMatchScore } from "@/lib/matchscore";
-import { invitePartner, leaveLeague, LeagueError, registerForLeague, respondToInvite } from "@/lib/league";
+import { AlreadyDone, invitePartner, leaveLeague, LeagueError, registerForLeague, respondToInvite } from "@/lib/league";
 import { sendPartnerInvite, sendScoreReported } from "@/lib/email";
 
 export type ActionResult = { ok: boolean; error?: string; message?: string };
@@ -16,6 +16,10 @@ class ActionError extends Error {}
 
 /** Known failures come back as a readable message; anything unexpected is logged and still returns one instead of an error page. */
 function fail(e: unknown): ActionResult {
+  if (e instanceof AlreadyDone) {
+    refresh();
+    return { ok: true, message: e.message };
+  }
   if (e instanceof LeagueError || e instanceof ActionError) return { ok: false, error: e.message };
   console.error("league action failed", e);
   return { ok: false, error: "Something went wrong — nothing was saved. Try again." };

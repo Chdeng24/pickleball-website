@@ -19,7 +19,8 @@ Supporting docs:
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"   # node is not on PATH
 npm run dev          # localhost:3000
-npm test             # node --test over src/**/*.test.ts  (45 passing)
+npm test             # node --test over src/**/*.test.ts  (106 passing)
+npm run test:league  # signup edge cases against the real DB, always rolled back
 npm run lint
 npm run build
 npm run db:push      # apply schema to Neon

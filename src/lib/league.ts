@@ -28,6 +28,13 @@ export class LeagueError extends Error {
   }
 }
 
+/**
+ * The request asks for something that's already true — a double-click, a
+ * resubmitted form after a refresh, or a stale tab. Nothing is written and
+ * the action reports success with this message instead of an error.
+ */
+export class AlreadyDone extends LeagueError {}
+
 const ACTIVE_STATUSES = ["registration", "pools", "knockout"] as const;
 
 type League = typeof schema.tournaments.$inferSelect;
@@ -181,10 +188,9 @@ export async function registerForLeagueTx(
 
   const mine = await committedLeague(tx, me.id);
   if (mine) {
+    if (mine.id === league.id) throw new AlreadyDone(`You're already signed up for the ${league.name}.`);
     throw new LeagueError(
-      mine.id === league.id
-        ? "You're already on a team in this league."
-        : `You're already playing in the ${mine.name}. It's one league per person — leave that one first to switch.`,
+      `You're already playing in the ${mine.name}. It's one league per person — leave that one first to switch.`,
     );
   }
 
@@ -300,6 +306,8 @@ export async function respondToInviteTx(
     .select()
     .from(schema.tmTeamMembers)
     .where(and(eq(schema.tmTeamMembers.teamId, input.teamId), eq(schema.tmTeamMembers.memberId, input.userId)));
+  if (row?.inviteStatus === "accepted" && input.accept) throw new AlreadyDone("You're already on this team.");
+  if (row?.inviteStatus === "declined" && !input.accept) throw new AlreadyDone("Invite declined.");
   if (!row || row.inviteStatus !== "pending") throw new LeagueError("That invite is no longer open.");
 
   const setStatus = (inviteStatus: "accepted" | "declined") =>
@@ -345,7 +353,7 @@ export async function leaveLeagueTx(tx: Tx, input: { teamId: string; userId: str
     .select({ tournamentId: schema.tmTeams.tournamentId })
     .from(schema.tmTeams)
     .where(eq(schema.tmTeams.id, input.teamId));
-  if (!teamRef) throw new LeagueError("That team no longer exists.");
+  if (!teamRef) throw new LeagueError("That team changed since you loaded the page — refresh to see where you stand.");
 
   const league = await lockLeague(tx, teamRef.tournamentId);
   if (league.status !== "registration") {
@@ -363,8 +371,9 @@ export async function leaveLeagueTx(tx: Tx, input: { teamId: string; userId: str
     .innerJoin(schema.users, eq(schema.tmTeamMembers.memberId, schema.users.id))
     .where(eq(schema.tmTeamMembers.teamId, input.teamId));
 
+  const [team] = await tx.select({ status: schema.tmTeams.status }).from(schema.tmTeams).where(eq(schema.tmTeams.id, input.teamId));
   const me = members.find((m) => m.memberId === input.userId && m.inviteStatus === "accepted");
-  if (!me) throw new LeagueError("You're not on that team.");
+  if (!me || team?.status === "withdrawn") throw new AlreadyDone("You've left the league.");
 
   await tx
     .delete(schema.tmTeamMembers)
@@ -385,8 +394,8 @@ export async function leaveLeagueTx(tx: Tx, input: { teamId: string; userId: str
     .set({ isCaptain: true })
     .where(and(eq(schema.tmTeamMembers.teamId, input.teamId), eq(schema.tmTeamMembers.memberId, stays.memberId)));
 
-  const [team] = await tx.select({ name: schema.tmTeams.name }).from(schema.tmTeams).where(eq(schema.tmTeams.id, input.teamId));
-  if (team && (team.name === defaultTeamName(me, stays) || team.name === defaultTeamName(stays, me))) {
+  const [named] = await tx.select({ name: schema.tmTeams.name }).from(schema.tmTeams).where(eq(schema.tmTeams.id, input.teamId));
+  if (named && (named.name === defaultTeamName(me, stays) || named.name === defaultTeamName(stays, me))) {
     await tx.update(schema.tmTeams).set({ name: defaultTeamName(stays) }).where(eq(schema.tmTeams.id, input.teamId));
   }
 }

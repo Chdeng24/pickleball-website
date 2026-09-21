@@ -4,6 +4,7 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import ws from "ws";
 import { env } from "@/lib/env";
 import * as schema from "./schema";
+import { isTransientDbError } from "./transient";
 
 /**
  * Transaction-capable driver.
@@ -33,8 +34,23 @@ export type Tx = Parameters<Parameters<ReturnType<typeof connect>["transaction"]
  * forbids reusing a socket opened by one request from another request ("Cannot
  * perform I/O on behalf of a different request"), which is exactly what a
  * module-level pool does on the second request an isolate serves.
+ *
+ * A dropped connection or lock conflict gets one retry on a fresh pool (see
+ * `isTransientDbError`) — the failed attempt rolled back, so `fn` must only
+ * be safe to re-run from scratch, which every transaction here is.
  */
 export async function withTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
+  try {
+    return await runOnce(fn);
+  } catch (e) {
+    if (!isTransientDbError(e)) throw e;
+    console.warn("transaction hit a transient DB error, retrying once", e);
+    await new Promise((r) => setTimeout(r, 150 + Math.random() * 250));
+    return runOnce(fn);
+  }
+}
+
+async function runOnce<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
   const pool = new Pool({ connectionString: env().DATABASE_URL });
   try {
     return await connect(pool).transaction(fn);
