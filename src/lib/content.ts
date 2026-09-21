@@ -131,6 +131,14 @@ export const tournamentPrograms = [
   },
 ];
 
+/** Shown by the app's error boundaries when a page fails to load. */
+export const errorCopy = {
+  title: "That didn't load",
+  body: "Usually a hiccup on our end or a spotty connection. Nothing you already signed up for was lost — try again, and if it keeps happening, email us.",
+  retry: "Try again",
+  home: "Back to home",
+};
+
 /** "How it works" steps on the Tournaments tab. `icon` maps to a lucide icon in the page. */
 export const leagueSteps = [
   {

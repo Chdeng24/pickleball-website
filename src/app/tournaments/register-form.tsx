@@ -3,8 +3,10 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { registerTeam, type ActionResult } from "./actions";
+import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
+const safeRegisterTeam = safeAction(registerTeam);
 
 function SubmitButton() {
   const { pending } = useFormStatus();
@@ -20,7 +22,7 @@ function SubmitButton() {
 }
 
 export function RegisterForm({ tournamentId, leagueName }: { tournamentId: string; leagueName: string }) {
-  const [state, action] = useActionState(registerTeam, initialState);
+  const [state, action] = useActionState(safeRegisterTeam, initialState);
   const [open, setOpen] = useState(false);
 
   if (!open) {
@@ -65,6 +67,7 @@ export function RegisterForm({ tournamentId, leagueName }: { tournamentId: strin
         />
       </div>
       {state.error && <p className="border-l-4 border-red-500 bg-red-50 p-3 text-sm text-red-700">{state.error}</p>}
+      {state.ok && state.message && <p className="border-l-4 border-gold-500 bg-white p-3 text-sm text-navy-900">{state.message}</p>}
       <div className="flex gap-3">
         <SubmitButton />
         <button type="button" onClick={() => setOpen(false)} className="h-10 px-3 text-xs font-bold uppercase text-ink/50">

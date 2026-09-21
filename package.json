@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "node --test 'src/**/*.test.ts'",
+    "test:league": "NODE_PATH=scripts/stubs tsx --env-file=.env scripts/league-edge-tests.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

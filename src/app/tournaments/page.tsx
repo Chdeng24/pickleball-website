@@ -98,6 +98,18 @@ function LeagueMeta({ league, taken, now }: { league: League; taken: number; now
   );
 }
 
+/** Tiny spots-left tag for the league jump buttons. */
+function SpotsChip({ league, taken, now }: { league: League; taken: number; now: Date }) {
+  if (!isRegistrationOpen(league, now)) return <span className="text-ink/45">Closed</span>;
+  const left = spotsLeft(taken, league.maxPlayers);
+  if (left === null) return <span className="bg-gold-500 px-1.5 py-0.5 text-[10px] text-navy-900">Open</span>;
+  return (
+    <span className={cn("px-1.5 py-0.5 text-[10px]", left === 0 ? "bg-navy-900/10 text-ink/60" : "bg-gold-500 text-navy-900")}>
+      {left === 0 ? "Full" : `${left} left`}
+    </span>
+  );
+}
+
 function PoolTable({
   pool,
   standings,
@@ -332,7 +344,7 @@ async function LeagueCard({
   const live = Boolean(league.poolsAnnouncedAt);
 
   return (
-    <div className="border-2 border-navy-900/10 bg-white p-6">
+    <div id={`league-${league.id}`} className="scroll-mt-24 border-2 border-navy-900/10 bg-white p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-display text-lg font-extrabold uppercase text-navy-900">{league.name}</h3>
         <span className="bg-navy-900/5 px-2.5 py-1 text-xs font-bold uppercase text-navy-900">
@@ -405,23 +417,33 @@ async function MemberTournamentsView({ user }: { user: SessionUser }) {
           <Kicker>Semester long</Kicker>
           <h2 className="mt-2 font-display text-xl font-extrabold uppercase text-navy-900">Pickleball League</h2>
 
-          {leagues.length === 0 ? (
-            <p className="mt-3 max-w-xl text-sm leading-relaxed text-ink/60">
-              Nothing open right now — exec will announce it here once it is.
-            </p>
-          ) : (
-            <div className="mt-4 space-y-4">
-              {leagues.map((l) => (
-                <LeagueCard
-                  key={l.id}
-                  league={l}
-                  user={user}
-                  memberships={memberships}
-                  taken={spots.get(l.id) ?? 0}
-                  now={now}
-                />
-              ))}
-            </div>
+          {leagues.length > 0 && (
+            <>
+              <nav aria-label="Jump to a league" className="mt-4 flex flex-wrap gap-2">
+                {leagues.map((l) => (
+                  <a
+                    key={l.id}
+                    href={`#league-${l.id}`}
+                    className="flex h-10 items-center gap-2 border-2 border-navy-900/15 bg-white px-4 font-display text-xs font-bold uppercase tracking-wide text-navy-900 transition-colors hover:border-navy-900"
+                  >
+                    {l.name}
+                    <SpotsChip league={l} taken={spots.get(l.id) ?? 0} now={now} />
+                  </a>
+                ))}
+              </nav>
+              <div className="mt-4 space-y-4">
+                {leagues.map((l) => (
+                  <LeagueCard
+                    key={l.id}
+                    league={l}
+                    user={user}
+                    memberships={memberships}
+                    taken={spots.get(l.id) ?? 0}
+                    now={now}
+                  />
+                ))}
+              </div>
+            </>
           )}
 
           <div className="mt-8">
@@ -502,12 +524,15 @@ async function PublicTournamentsView({ user }: { user: SessionUser | null }) {
               {signedInPending ? (
                 <>Your account is waiting on exec approval — once you&apos;re approved, you can sign up from this page.</>
               ) : (
-                <>
-                  <Link href="/login" className="font-semibold text-navy-800 underline underline-offset-2">
-                    Sign in
-                  </Link>{" "}
-                  to sign up — solo or with a partner.
-                </>
+                <span className="flex flex-wrap items-center gap-4">
+                  <Link
+                    href="/login"
+                    className="flex h-11 items-center bg-gold-500 px-6 font-display text-xs font-bold uppercase tracking-[0.12em] text-navy-900 transition-colors hover:bg-gold-400"
+                  >
+                    Sign in to sign up
+                  </Link>
+                  Solo or with a partner — it&apos;s free.
+                </span>
               )}
             </p>
           </Section>

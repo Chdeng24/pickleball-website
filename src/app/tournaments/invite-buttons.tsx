@@ -3,6 +3,9 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { respondToInviteAction } from "./actions";
+import { safeAction } from "./safe-action";
+
+const safeRespond = safeAction(respondToInviteAction);
 
 export function InviteButtons({ teamId }: { teamId: string }) {
   const [pending, startTransition] = useTransition();
@@ -12,7 +15,7 @@ export function InviteButtons({ teamId }: { teamId: string }) {
   const respond = (accept: boolean) =>
     startTransition(async () => {
       setError(null);
-      const res = await respondToInviteAction(teamId, accept);
+      const res = await safeRespond(teamId, accept);
       if (!res.ok) setError(res.error ?? "Something went wrong.");
       else router.refresh();
     });

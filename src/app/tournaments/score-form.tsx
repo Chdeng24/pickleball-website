@@ -3,8 +3,11 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 import { reportScore, disputeScore, type ActionResult } from "./actions";
+import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
+const safeReportScore = safeAction(reportScore);
+const safeDisputeScore = safeAction(disputeScore);
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -20,7 +23,7 @@ function SubmitButton({ label }: { label: string }) {
 }
 
 export function ScoreReportForm({ matchId, teamAName, teamBName }: { matchId: string; teamAName: string; teamBName: string }) {
-  const [state, formAction] = useActionState(reportScore, initialState);
+  const [state, formAction] = useActionState(safeReportScore, initialState);
   const [open, setOpen] = useState(false);
   const [games, setGames] = useState([
     ["", ""],
@@ -88,7 +91,7 @@ export function ScoreReportForm({ matchId, teamAName, teamBName }: { matchId: st
 }
 
 export function DisputeScoreButton({ matchId }: { matchId: string }) {
-  const [state, formAction] = useActionState(disputeScore, initialState);
+  const [state, formAction] = useActionState(safeDisputeScore, initialState);
   const [open, setOpen] = useState(false);
 
   if (!open) {
