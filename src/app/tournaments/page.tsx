@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { and, asc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, ne } from "drizzle-orm";
 import { CalendarClock, Check, ClipboardCheck, Clock, MapPin, Trophy, Users } from "lucide-react";
 import { Section } from "@/components/site/section";
 import { TournamentCards } from "@/components/site/tournament-cards";
@@ -178,6 +178,70 @@ async function AllPools({ league, highlight }: { league: League; highlight?: str
           )}
         />
       ))}
+    </div>
+  );
+}
+
+/** Everyone holding a spot in a league — members only, names only (no emails). */
+async function SignupList({ league, highlight }: { league: League; highlight?: string }) {
+  const teams = await db()
+    .select({ id: schema.tmTeams.id, name: schema.tmTeams.name })
+    .from(schema.tmTeams)
+    .where(and(eq(schema.tmTeams.tournamentId, league.id), ne(schema.tmTeams.status, "withdrawn")));
+  const roster = await teamMembers(teams.map((t) => t.id));
+  const label = (m: { name: string | null; email: string }) => m.name ?? m.email.split("@")[0];
+
+  const rows = teams
+    .map((t) => {
+      const accepted = roster.filter((m) => m.teamId === t.id && m.inviteStatus === "accepted");
+      const pending = roster.filter((m) => m.teamId === t.id && m.inviteStatus === "pending");
+      const kind = accepted.length >= 2 ? "team" : pending.length > 0 ? "waiting" : "free_agent";
+      return { team: t, accepted, pending, kind } as const;
+    })
+    .filter((r) => r.accepted.length > 0)
+    .sort((a, b) => {
+      const order = { team: 0, waiting: 1, free_agent: 2 };
+      return order[a.kind] - order[b.kind] || a.team.name.localeCompare(b.team.name);
+    });
+
+  const count = (k: string) => rows.filter((r) => r.kind === k).length;
+  if (rows.length === 0) return <p className="text-sm text-ink/50">Nobody yet — be the first.</p>;
+
+  return (
+    <div>
+      <p className="text-xs text-ink/50">
+        {count("team")} full team{count("team") === 1 ? "" : "s"} · {count("waiting")} waiting on a partner ·{" "}
+        {count("free_agent")} free agent{count("free_agent") === 1 ? "" : "s"}
+      </p>
+      <ul className="mt-2 border-2 border-navy-900/10 bg-white">
+        {rows.map(({ team, accepted, pending, kind }) => (
+          <li
+            key={team.id}
+            className={cn(
+              "flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-navy-900/5 p-3 text-sm last:border-b-0",
+              team.id === highlight && "bg-gold-500/10",
+            )}
+          >
+            <span className="text-navy-900">
+              <strong>{accepted.map(label).join(" & ")}</strong>
+              {kind === "waiting" && <span className="text-ink/55"> — invited {pending.map(label).join(", ")}</span>}
+              {kind === "team" && team.name !== accepted.map(label).join(" & ") && (
+                <span className="text-ink/55"> · {team.name}</span>
+              )}
+            </span>
+            <span
+              className={cn(
+                "shrink-0 px-1.5 py-0.5 text-[10px] font-bold uppercase",
+                kind === "team" && "bg-navy-900 text-white",
+                kind === "waiting" && "bg-navy-900/10 text-navy-900",
+                kind === "free_agent" && "bg-gold-500 text-navy-900",
+              )}
+            >
+              {kind === "team" ? "Team" : kind === "waiting" ? "Invite pending" : "Free agent"}
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -376,6 +440,19 @@ async function LeagueCard({
         </p>
       )}
       {state.kind === "closed" && !live && <p className="mt-4 text-sm text-ink/60">Registration is closed.</p>}
+
+      {!live && (
+        <details className="group mt-5">
+          <summary className="inline-flex h-9 cursor-pointer list-none items-center border-2 border-navy-900/15 px-4 text-xs font-bold uppercase tracking-wide text-navy-900 hover:border-navy-900 [&::-webkit-details-marker]:hidden">
+            <Users size={13} className="mr-2" />
+            <span className="group-open:hidden">See who&apos;s signed up</span>
+            <span className="hidden group-open:inline">Hide sign-ups</span>
+          </summary>
+          <div className="mt-3">
+            <SignupList league={league} highlight={state.kind === "on_team" ? state.teamId : undefined} />
+          </div>
+        </details>
+      )}
 
       {live && (
         <details className="mt-5" open={state.kind !== "on_team"}>
