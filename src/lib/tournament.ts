@@ -1,7 +1,9 @@
 import "server-only";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { db, schema } from "@/db";
+import { withTransaction, type Tx } from "@/db/pool";
 import { assignPools, generateRoundRobinMatches, type DrawLevel } from "@/lib/draw";
+import { isDrawReady } from "@/lib/league-rules";
 import type { PoolMatch } from "@/lib/standings";
 
 /** Confirmed pool matches for a tournament, with the actual reported games (for game/point-diff tiebreakers). */
@@ -32,171 +34,186 @@ export class TournamentError extends Error {
   }
 }
 
+async function lockTournament(tx: Tx, tournamentId: string) {
+  const [tournament] = await tx
+    .select()
+    .from(schema.tournaments)
+    .where(eq(schema.tournaments.id, tournamentId))
+    .for("update");
+  if (!tournament) throw new TournamentError("not_found");
+  return tournament;
+}
+
 /** Team level = the stronger of its two players — standard doubles seeding. */
 const LEVEL_RANK: Record<DrawLevel, number> = { advanced: 2, beginner: 1, unknown: 0 };
 function teamLevel(memberLevels: DrawLevel[]): DrawLevel {
   return memberLevels.reduce((best, l) => (LEVEL_RANK[l] > LEVEL_RANK[best] ? l : best), "unknown" as DrawLevel);
 }
 
-/** A team is draw-ready once it has exactly 2 members who've both accepted. */
-async function drawReadyTeams(tournamentId: string) {
-  const teams = await db().query.tmTeams.findMany({
-    where: and(eq(schema.tmTeams.tournamentId, tournamentId), eq(schema.tmTeams.status, "registered")),
-    with: {
-      members: { with: { member: { columns: { derivedLevel: true } } } },
-    },
-  });
-
-  return teams
-    .filter((t) => t.members.length === 2 && t.members.every((m) => m.inviteStatus === "accepted"))
-    .map((t) => ({
-      id: t.id,
-      level: teamLevel(t.members.map((m) => m.member.derivedLevel)),
-    }));
+/** Rebuild one pool's round-robin from whoever is in it now. Only for the unpublished draft. */
+async function rebuildPool(tx: Tx, tournamentId: string, pool: string) {
+  await tx
+    .delete(schema.matches)
+    .where(
+      and(eq(schema.matches.tournamentId, tournamentId), eq(schema.matches.stage, "pool"), eq(schema.matches.pool, pool)),
+    );
+  const poolTeams = await tx
+    .select({ id: schema.tmTeams.id })
+    .from(schema.tmTeams)
+    .where(
+      and(eq(schema.tmTeams.tournamentId, tournamentId), eq(schema.tmTeams.pool, pool), ne(schema.tmTeams.status, "withdrawn")),
+    );
+  const pairs = generateRoundRobinMatches(poolTeams.map((t) => t.id));
+  if (pairs.length > 0) {
+    await tx.insert(schema.matches).values(pairs.map((p) => ({ tournamentId, stage: "pool" as const, pool, ...p })));
+  }
 }
 
 /**
- * (Re)builds the draft pool assignment + round-robin matches for a
- * tournament from its currently-registered, draw-ready teams. Safe to call
- * repeatedly pre-announce — it deletes and recreates only PENDING pool
- * matches, never touching anything already reported/confirmed, which can't
- * exist yet at this stage anyway (announce is what starts play).
+ * (Re)builds the draft pool assignment + round-robin matches from every
+ * complete (two confirmed players), non-withdrawn team. Generating it closes
+ * registration; nothing is visible to members or emailed until exec publishes.
  */
-export async function generateDraftDraw(tournamentId: string): Promise<{ poolCount: number; teamCount: number }> {
-  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
-  if (!tournament) throw new TournamentError("not_found");
+export async function generateDraftDrawTx(tx: Tx, tournamentId: string): Promise<{ poolCount: number; teamCount: number }> {
+  const tournament = await lockTournament(tx, tournamentId);
   if (tournament.poolsAnnouncedAt) throw new TournamentError("already_announced");
+  if (tournament.status !== "registration" && tournament.status !== "pools") throw new TournamentError("not_open");
 
-  const teams = await drawReadyTeams(tournamentId);
-  const pools = assignPools(teams, tournament.poolSize);
+  const teams = await tx.query.tmTeams.findMany({
+    where: and(eq(schema.tmTeams.tournamentId, tournamentId), eq(schema.tmTeams.status, "registered")),
+    with: { members: { with: { member: { columns: { derivedLevel: true } } } } },
+  });
 
-  await db().delete(schema.matches).where(and(eq(schema.matches.tournamentId, tournamentId), eq(schema.matches.stage, "pool")));
+  const ready = teams
+    .filter((t) => isDrawReady(t.members))
+    .map((t) => ({
+      id: t.id,
+      level: teamLevel(t.members.filter((m) => m.inviteStatus === "accepted").map((m) => m.member.derivedLevel)),
+    }));
+
+  if (ready.length < 2) throw new TournamentError("too_few_teams");
+
+  const pools = assignPools(ready, tournament.poolSize);
+
+  await tx
+    .delete(schema.matches)
+    .where(and(eq(schema.matches.tournamentId, tournamentId), eq(schema.matches.stage, "pool")));
+  await tx.update(schema.tmTeams).set({ pool: null }).where(eq(schema.tmTeams.tournamentId, tournamentId));
 
   for (const [pool, teamIds] of pools) {
-    await db()
-      .update(schema.tmTeams)
-      .set({ pool })
-      .where(inArray(schema.tmTeams.id, teamIds));
-
+    await tx.update(schema.tmTeams).set({ pool }).where(inArray(schema.tmTeams.id, teamIds));
     const pairs = generateRoundRobinMatches(teamIds);
     if (pairs.length > 0) {
-      await db()
+      await tx
         .insert(schema.matches)
         .values(pairs.map((p) => ({ tournamentId, stage: "pool" as const, pool, ...p })));
     }
   }
 
-  // Teams that didn't make the cut (declined partner, solo, etc.) get no pool.
-  const drawnIds = new Set(teams.map((t) => t.id));
-  const allRegistered = await db()
-    .select({ id: schema.tmTeams.id })
-    .from(schema.tmTeams)
-    .where(and(eq(schema.tmTeams.tournamentId, tournamentId), eq(schema.tmTeams.status, "registered")));
-  const undrawnIds = allRegistered.map((t) => t.id).filter((id) => !drawnIds.has(id));
-  if (undrawnIds.length > 0) {
-    await db().update(schema.tmTeams).set({ pool: null }).where(inArray(schema.tmTeams.id, undrawnIds));
-  }
-
-  await db().update(schema.tournaments).set({ status: "pools" }).where(eq(schema.tournaments.id, tournamentId));
-
-  return { poolCount: pools.size, teamCount: teams.length };
+  await tx.update(schema.tournaments).set({ status: "pools" }).where(eq(schema.tournaments.id, tournamentId));
+  return { poolCount: pools.size, teamCount: ready.length };
 }
 
-/** Manually move a team to a different pool letter, then rebuild that tournament's matches to match. Draft stage only. */
-export async function moveTeamPool(teamId: string, pool: string): Promise<void> {
-  const [team] = await db().select().from(schema.tmTeams).where(eq(schema.tmTeams.id, teamId));
-  if (!team) throw new TournamentError("not_found");
-  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, team.tournamentId));
-  if (!tournament) throw new TournamentError("not_found");
+/** Throw away the unpublished draft and reopen registration — the undo for "generated the draw too early". */
+export async function discardDraftDrawTx(tx: Tx, tournamentId: string): Promise<void> {
+  const tournament = await lockTournament(tx, tournamentId);
   if (tournament.poolsAnnouncedAt) throw new TournamentError("already_announced");
+  if (tournament.status !== "pools") throw new TournamentError("no_draft_draw");
 
-  // Rebuild round-robin matches for both the old and new pool so they stay consistent.
-  const affectedPools = new Set([team.pool, pool].filter((p): p is string => Boolean(p)));
-  await db().update(schema.tmTeams).set({ pool }).where(eq(schema.tmTeams.id, teamId));
+  await tx
+    .delete(schema.matches)
+    .where(and(eq(schema.matches.tournamentId, tournamentId), eq(schema.matches.stage, "pool")));
+  await tx.update(schema.tmTeams).set({ pool: null }).where(eq(schema.tmTeams.tournamentId, tournamentId));
+  await tx.update(schema.tournaments).set({ status: "registration" }).where(eq(schema.tournaments.id, tournamentId));
+}
 
-  for (const p of affectedPools) {
-    await db()
-      .delete(schema.matches)
-      .where(and(eq(schema.matches.tournamentId, tournament.id), eq(schema.matches.stage, "pool"), eq(schema.matches.pool, p)));
+/** Manually move a team to a different pool letter, then rebuild both affected pools. Draft stage only. */
+export async function moveTeamPoolTx(tx: Tx, teamId: string, pool: string): Promise<void> {
+  const [ref] = await tx.select().from(schema.tmTeams).where(eq(schema.tmTeams.id, teamId));
+  if (!ref) throw new TournamentError("not_found");
+  const tournament = await lockTournament(tx, ref.tournamentId);
+  if (tournament.poolsAnnouncedAt) throw new TournamentError("already_announced");
+  if (tournament.status !== "pools") throw new TournamentError("no_draft_draw");
+  if (ref.status === "withdrawn") throw new TournamentError("not_found");
 
-    const poolTeams = await db()
-      .select({ id: schema.tmTeams.id })
-      .from(schema.tmTeams)
-      .where(and(eq(schema.tmTeams.tournamentId, tournament.id), eq(schema.tmTeams.pool, p)));
-    const pairs = generateRoundRobinMatches(poolTeams.map((t) => t.id));
-    if (pairs.length > 0) {
-      await db()
-        .insert(schema.matches)
-        .values(pairs.map((pair) => ({ tournamentId: tournament.id, stage: "pool" as const, pool: p, ...pair })));
-    }
+  const roster = await tx
+    .select({ inviteStatus: schema.tmTeamMembers.inviteStatus })
+    .from(schema.tmTeamMembers)
+    .where(eq(schema.tmTeamMembers.teamId, teamId));
+  if (!isDrawReady(roster)) throw new TournamentError("incomplete_team");
+
+  await tx.update(schema.tmTeams).set({ pool }).where(eq(schema.tmTeams.id, teamId));
+  for (const p of new Set([ref.pool, pool].filter((x): x is string => Boolean(x)))) {
+    await rebuildPool(tx, tournament.id, p);
   }
 }
 
 /**
- * Withdraws a team. Pre-announce, it's removed cleanly from its pool (draft
- * gets regenerated next time exec runs the draw). Post-announce, the team's
- * still-unplayed matches are deleted — a "bye" for whoever they'd have faced
- * — while anything already reported/confirmed stands as real history.
+ * Withdraws a team. During registration it just frees the spots. In the
+ * unpublished draft it leaves its pool and only that pool's matches are
+ * rebuilt. Once live, its unplayed matches are deleted — a bye for whoever
+ * they'd have faced — while reported/confirmed results stand as real history.
  */
-export async function withdrawTeam(teamId: string): Promise<void> {
-  const [team] = await db().select().from(schema.tmTeams).where(eq(schema.tmTeams.id, teamId));
-  if (!team) throw new TournamentError("not_found");
-  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, team.tournamentId));
-  if (!tournament) throw new TournamentError("not_found");
+export async function withdrawTeamTx(tx: Tx, teamId: string): Promise<void> {
+  const [ref] = await tx.select().from(schema.tmTeams).where(eq(schema.tmTeams.id, teamId));
+  if (!ref) throw new TournamentError("not_found");
+  const tournament = await lockTournament(tx, ref.tournamentId);
 
-  await db().update(schema.tmTeams).set({ status: "withdrawn" }).where(eq(schema.tmTeams.id, teamId));
+  await tx.update(schema.tmTeams).set({ status: "withdrawn" }).where(eq(schema.tmTeams.id, teamId));
+  await tx
+    .update(schema.tmTeamMembers)
+    .set({ inviteStatus: "declined" })
+    .where(and(eq(schema.tmTeamMembers.teamId, teamId), eq(schema.tmTeamMembers.inviteStatus, "pending")));
 
   if (!tournament.poolsAnnouncedAt) {
-    // Draft stage: just drop them from the pool; exec re-runs generateDraftDraw to reshuffle.
-    await db().update(schema.tmTeams).set({ pool: null }).where(eq(schema.tmTeams.id, teamId));
-    await db()
-      .delete(schema.matches)
-      .where(
-        and(
-          eq(schema.matches.tournamentId, tournament.id),
-          eq(schema.matches.stage, "pool"),
-        ),
-      );
+    if (ref.pool) {
+      await tx.update(schema.tmTeams).set({ pool: null }).where(eq(schema.tmTeams.id, teamId));
+      await rebuildPool(tx, tournament.id, ref.pool);
+    }
     return;
   }
 
-  // Live season: delete only their unplayed matches — a bye for the opponent, not a forfeit-win.
-  const theirMatches = await db()
-    .select()
+  const theirs = await tx
+    .select({ id: schema.matches.id, teamAId: schema.matches.teamAId, teamBId: schema.matches.teamBId })
     .from(schema.matches)
-    .where(
-      and(
-        eq(schema.matches.tournamentId, tournament.id),
-        eq(schema.matches.status, "pending"),
-      ),
-    );
-  const toDelete = theirMatches
-    .filter((m) => m.teamAId === teamId || m.teamBId === teamId)
-    .map((m) => m.id);
-  if (toDelete.length > 0) {
-    await db().delete(schema.matches).where(inArray(schema.matches.id, toDelete));
-  }
+    .where(and(eq(schema.matches.tournamentId, tournament.id), eq(schema.matches.status, "pending")));
+  const toDelete = theirs.filter((m) => m.teamAId === teamId || m.teamBId === teamId).map((m) => m.id);
+  if (toDelete.length > 0) await tx.delete(schema.matches).where(inArray(schema.matches.id, toDelete));
 }
 
-/** Locks the draft draw, marks it announced, and returns the teams to notify (caller sends the emails). */
-export async function publishDraw(tournamentId: string) {
-  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
-  if (!tournament) throw new TournamentError("not_found");
+/** Locks the draft draw, marks it announced, and returns the drawn teams to notify (caller sends the emails). */
+export async function publishDrawTx(tx: Tx, tournamentId: string) {
+  const tournament = await lockTournament(tx, tournamentId);
   if (tournament.poolsAnnouncedAt) throw new TournamentError("already_announced");
   if (tournament.status !== "pools") throw new TournamentError("no_draft_draw");
 
-  await db()
+  const drawn = await tx.query.tmTeams.findMany({
+    where: and(eq(schema.tmTeams.tournamentId, tournamentId), ne(schema.tmTeams.status, "withdrawn")),
+    with: { members: { with: { member: true } } },
+  });
+  const teams = drawn.filter((t) => t.pool);
+  if (teams.length < 2) throw new TournamentError("too_few_teams");
+
+  await tx
     .update(schema.tournaments)
     .set({ poolsAnnouncedAt: new Date() })
     .where(eq(schema.tournaments.id, tournamentId));
 
-  const teams = await db().query.tmTeams.findMany({
-    where: and(eq(schema.tmTeams.tournamentId, tournamentId), isNull(schema.tmTeams.pool)),
-  });
-  const drawnTeams = await db().query.tmTeams.findMany({
-    where: and(eq(schema.tmTeams.tournamentId, tournamentId)),
-    with: { members: { with: { member: true } } },
-  });
-
-  return { tournament, teams: drawnTeams.filter((t) => t.pool), undrawn: teams };
+  return { tournament: { ...tournament, poolsAnnouncedAt: new Date() }, teams };
 }
+
+/** Ends a league — it drops off members' Tournaments tab and stops holding anyone's one-league slot. */
+export async function completeLeague(tournamentId: string): Promise<void> {
+  await withTransaction(async (tx) => {
+    await lockTournament(tx, tournamentId);
+    await tx.update(schema.tournaments).set({ status: "complete" }).where(eq(schema.tournaments.id, tournamentId));
+  });
+}
+
+/* ── wrappers the server actions call ─────────────────────────────────── */
+
+export const generateDraftDraw = (tournamentId: string) => withTransaction((tx) => generateDraftDrawTx(tx, tournamentId));
+export const discardDraftDraw = (tournamentId: string) => withTransaction((tx) => discardDraftDrawTx(tx, tournamentId));
+export const moveTeamPool = (teamId: string, pool: string) => withTransaction((tx) => moveTeamPoolTx(tx, teamId, pool));
+export const withdrawTeam = (teamId: string) => withTransaction((tx) => withdrawTeamTx(tx, teamId));
+export const publishDraw = (tournamentId: string) => withTransaction((tx) => publishDrawTx(tx, tournamentId));

@@ -6,6 +6,7 @@ import { db, schema } from "@/db";
 import { getSessionUser } from "@/lib/session";
 import { formatEventWhen } from "@/lib/dates";
 import { Kicker } from "@/components/ui/kicker";
+import { LeagueBanner } from "./league-banner";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
@@ -75,6 +76,8 @@ export default async function DashboardPage() {
           Hey, {firstName}
         </h1>
       </div>
+
+      {user && <LeagueBanner user={user} />}
 
       <section>
         <h2 className="font-display text-sm font-bold uppercase tracking-[0.14em] text-ink/50">

@@ -1,6 +1,27 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { laInputToUtc, utcToLaInputValue, formatEventWhen, pacificDateKey, pacificDateParts } from "./dates.ts";
+import {
+  laInputToUtc,
+  utcToLaInputValue,
+  formatEventWhen,
+  pacificDateKey,
+  pacificDateParts,
+  laDeadlineToUtc,
+  formatDeadline,
+} from "./dates.ts";
+
+test("league deadline: Sat Sep 26 2026 11:59 PM PDT stays open through 11:59:59.999", () => {
+  const d = laDeadlineToUtc("2026-09-26T23:59");
+  assert.equal(d.toISOString(), "2026-09-27T06:59:59.999Z");
+});
+
+test("deadline round-trips to the same datetime-local value for the edit form", () => {
+  assert.equal(utcToLaInputValue(laDeadlineToUtc("2026-09-26T23:59")), "2026-09-26T23:59");
+});
+
+test("formatDeadline reads as a Pacific day + time", () => {
+  assert.equal(formatDeadline(laDeadlineToUtc("2026-09-26T23:59")), "Sat, Sep 26 · 11:59 PM PDT");
+});
 
 test("converts a PST (winter) local input to the correct UTC instant", () => {
   // Feb 3 2026, 7:00 PM in Los Angeles is PST (UTC-8) -> 03:00 UTC next day.

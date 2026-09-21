@@ -3,13 +3,189 @@
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useActionState } from "react";
-import { moveTeam, withdraw, generateDraft, publish, resolveDispute, type ActionResult } from "../actions";
+import { cn } from "@/lib/utils";
+import {
+  discardDraft,
+  endLeague,
+  generateDraft,
+  moveTeam,
+  pairTeams,
+  publish,
+  resolveDispute,
+  withdraw,
+  type ActionResult,
+} from "../actions";
 
 const initialState: ActionResult = { ok: true };
 
-export function MoveTeamPoolSelect({ teamId, currentPool }: { teamId: string; currentPool: string | null }) {
+const TONES = {
+  primary: "bg-navy-900 text-white hover:bg-navy-800",
+  gold: "bg-gold-500 text-navy-900 hover:bg-gold-400",
+  danger: "bg-red-600 text-white hover:bg-red-700",
+  outline: "border-2 border-navy-900/20 text-navy-900 hover:border-navy-900",
+  dangerOutline: "border-2 border-red-300 text-red-600 hover:border-red-600",
+};
+
+/** One click to arm, a second to confirm — every exec action that changes what members see goes through this. */
+function ConfirmButton({
+  label,
+  confirmText,
+  confirmLabel = "Confirm",
+  run,
+  tone = "primary",
+  small = false,
+}: {
+  label: string;
+  confirmText?: string;
+  confirmLabel?: string;
+  run: () => Promise<ActionResult>;
+  tone?: keyof typeof TONES;
+  small?: boolean;
+}) {
+  const [armed, setArmed] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [result, setResult] = useState<ActionResult | null>(null);
+  const router = useRouter();
+  const size = small ? "h-7 px-2.5 text-xs" : "h-11 px-6 text-xs tracking-[0.12em]";
+
+  const go = () =>
+    startTransition(async () => {
+      const res = await run();
+      setResult(res);
+      setArmed(false);
+      if (res.ok) router.refresh();
+    });
+
+  if (armed && confirmText) {
+    return (
+      <div className={cn("border-2 p-4", tone.startsWith("danger") ? "border-red-300 bg-red-50" : "border-gold-500 bg-gold-500/10")}>
+        <p className="text-sm text-navy-900">{confirmText}</p>
+        <div className="mt-3 flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={go}
+            className={cn("h-10 px-5 font-display text-xs font-bold uppercase tracking-[0.12em] disabled:opacity-50", TONES[tone.startsWith("danger") ? "danger" : "primary"])}
+          >
+            {pending ? "Working…" : confirmLabel}
+          </button>
+          <button type="button" onClick={() => setArmed(false)} className="h-10 px-4 text-xs font-bold uppercase text-ink/50">
+            Cancel
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => (confirmText ? setArmed(true) : go())}
+        className={cn("font-display font-bold uppercase transition-colors disabled:opacity-50", size, TONES[tone])}
+      >
+        {pending ? "Working…" : label}
+      </button>
+      {result?.error && <span className="text-xs text-red-600">{result.error}</span>}
+      {result?.ok && result.message && <span className="text-xs text-navy-800">{result.message}</span>}
+    </span>
+  );
+}
+
+export function GenerateDraftButton({
+  tournamentId,
+  regenerate,
+  closesText,
+}: {
+  tournamentId: string;
+  regenerate: boolean;
+  /** When registration is still open by date, say so — generating the draw closes it immediately. */
+  closesText: string | null;
+}) {
+  return (
+    <ConfirmButton
+      label={regenerate ? "Regenerate draft draw" : "Generate draft draw"}
+      confirmText={
+        regenerate
+          ? "Reshuffle every pool from scratch? Any moves you made by hand are lost."
+          : `This closes registration now${closesText ? ` (it was open until ${closesText})` : ""} and builds a draft only exec can see. Nothing is emailed until you publish, and you can discard the draft to reopen registration.`
+      }
+      confirmLabel={regenerate ? "Reshuffle" : "Close registration & draw"}
+      run={() => generateDraft(tournamentId)}
+    />
+  );
+}
+
+export function DiscardDraftButton({ tournamentId }: { tournamentId: string }) {
+  return (
+    <ConfirmButton
+      label="Discard draft & reopen registration"
+      tone="outline"
+      confirmText="Throw away this draft and reopen registration? If the deadline has passed, extend it in Settings too."
+      confirmLabel="Discard draft"
+      run={() => discardDraft(tournamentId)}
+    />
+  );
+}
+
+export function PublishDrawButton({ tournamentId, leftOut }: { tournamentId: string; leftOut: number }) {
+  return (
+    <ConfirmButton
+      label="Publish pools"
+      tone="gold"
+      confirmText={`This locks the pools, shows them to members, and emails every team their opponents. You can't move teams after this.${
+        leftOut ? ` ${leftOut} incomplete team${leftOut === 1 ? " is" : "s are"} NOT in the draw and will sit out.` : ""
+      }`}
+      confirmLabel="Publish"
+      run={() => publish(tournamentId)}
+    />
+  );
+}
+
+export function EndLeagueButton({ tournamentId }: { tournamentId: string }) {
+  return (
+    <ConfirmButton
+      label="End league"
+      tone="dangerOutline"
+      confirmText="End this league? It disappears from members' Tournaments tab, and players are free to join next semester's league. Results stay here."
+      confirmLabel="End league"
+      run={() => endLeague(tournamentId)}
+    />
+  );
+}
+
+export function WithdrawTeamButton({ teamId, live }: { teamId: string; live: boolean }) {
+  return (
+    <ConfirmButton
+      label="Withdraw"
+      tone="dangerOutline"
+      small
+      confirmText={
+        live
+          ? "Withdraw this team? Their unplayed matches are removed (a bye for opponents); played results stay."
+          : "Withdraw this team? Their spots open back up."
+      }
+      confirmLabel="Withdraw"
+      run={() => withdraw(teamId)}
+    />
+  );
+}
+
+export function MoveTeamPoolSelect({
+  teamId,
+  currentPool,
+  pools,
+}: {
+  teamId: string;
+  currentPool: string | null;
+  pools: string[];
+}) {
   const [state, action] = useActionState(moveTeam, initialState);
   const formRef = useRef<HTMLFormElement>(null);
+  // Existing pools, plus the next letter so exec can split a pool if they need to.
+  const next = String.fromCharCode(65 + pools.length);
+  const options = [...pools, next];
 
   return (
     <form action={action} ref={formRef} className="inline-flex items-center gap-2">
@@ -21,9 +197,10 @@ export function MoveTeamPoolSelect({ teamId, currentPool }: { teamId: string; cu
         className="h-8 border-2 border-navy-900/15 bg-white px-2 text-xs font-bold uppercase text-navy-900"
       >
         {!currentPool && <option value="">—</option>}
-        {Array.from({ length: 10 }, (_, i) => String.fromCharCode(65 + i)).map((p) => (
+        {options.map((p) => (
           <option key={p} value={p}>
             Pool {p}
+            {p === next ? " (new)" : ""}
           </option>
         ))}
       </select>
@@ -32,128 +209,28 @@ export function MoveTeamPoolSelect({ teamId, currentPool }: { teamId: string; cu
   );
 }
 
-export function WithdrawTeamButton({ teamId }: { teamId: string }) {
-  const [confirming, setConfirming] = useState(false);
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-
-  if (confirming) {
-    return (
-      <span className="inline-flex items-center gap-2">
-        <span className="text-xs text-ink/60">Withdraw this team?</span>
-        <button
-          type="button"
-          disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const res = await withdraw(teamId);
-              if (!res.ok) setError(res.error ?? "Failed.");
-              else router.refresh();
-            })
-          }
-          className="h-7 bg-red-600 px-2.5 text-xs font-bold uppercase text-white hover:bg-red-700"
-        >
-          Confirm
-        </button>
-        <button
-          type="button"
-          onClick={() => setConfirming(false)}
-          className="text-xs font-bold uppercase text-ink/50"
-        >
-          Cancel
-        </button>
-        {error && <span className="text-xs text-red-600">{error}</span>}
-      </span>
-    );
-  }
+export function PairTeamForm({ teamId, options }: { teamId: string; options: { id: string; label: string }[] }) {
+  const [state, action] = useActionState(pairTeams, initialState);
+  if (options.length === 0) return <span className="text-xs text-ink/40">No one else to pair with yet</span>;
 
   return (
-    <button
-      type="button"
-      onClick={() => setConfirming(true)}
-      className="h-7 border-2 border-red-300 px-2.5 text-xs font-bold uppercase text-red-600 hover:border-red-600"
-    >
-      Withdraw
-    </button>
-  );
-}
-
-export function GenerateDraftButton({ tournamentId }: { tournamentId: string }) {
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-
-  return (
-    <div>
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() =>
-          startTransition(async () => {
-            const res = await generateDraft(tournamentId);
-            if (!res.ok) setError(res.error ?? "Failed.");
-            else router.refresh();
-          })
-        }
-        className="h-11 bg-navy-900 px-6 font-display text-xs font-bold uppercase tracking-[0.12em] text-white transition-colors hover:bg-navy-800 disabled:opacity-50"
-      >
-        {pending ? "Generating…" : "Generate / regenerate draft draw"}
+    <form action={action} className="inline-flex flex-wrap items-center gap-2">
+      <input type="hidden" name="teamAId" value={teamId} />
+      <select name="teamBId" defaultValue="" className="h-8 border-2 border-navy-900/15 bg-white px-2 text-xs text-navy-900">
+        <option value="" disabled>
+          Pair with…
+        </option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      <button type="submit" className="h-8 bg-navy-900 px-3 text-xs font-bold uppercase text-white hover:bg-navy-800">
+        Pair
       </button>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-    </div>
-  );
-}
-
-export function PublishDrawButton({ tournamentId }: { tournamentId: string }) {
-  const [confirming, setConfirming] = useState(false);
-  const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-
-  if (confirming) {
-    return (
-      <div className="border-2 border-gold-500 bg-gold-500/10 p-4">
-        <p className="text-sm text-navy-900">
-          This locks the pools and emails every team their opponents. You won&apos;t be able to
-          move teams between pools after this — you sure?
-        </p>
-        <div className="mt-3 flex gap-3">
-          <button
-            type="button"
-            disabled={pending}
-            onClick={() =>
-              startTransition(async () => {
-                const res = await publish(tournamentId);
-                if (!res.ok) setError(res.error ?? "Failed.");
-                else router.refresh();
-              })
-            }
-            className="h-10 bg-navy-900 px-5 font-display text-xs font-bold uppercase tracking-[0.12em] text-white hover:bg-navy-800"
-          >
-            Publish pools
-          </button>
-          <button
-            type="button"
-            onClick={() => setConfirming(false)}
-            className="h-10 px-5 text-xs font-bold uppercase text-ink/50"
-          >
-            Cancel
-          </button>
-        </div>
-        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
-      </div>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={() => setConfirming(true)}
-      className="h-11 bg-gold-500 px-6 font-display text-xs font-bold uppercase tracking-[0.12em] text-navy-900 transition-colors hover:bg-gold-400"
-    >
-      Publish pools
-    </button>
+      {state.error && <span className="text-xs text-red-600">{state.error}</span>}
+    </form>
   );
 }
 

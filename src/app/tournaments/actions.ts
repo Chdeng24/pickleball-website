@@ -2,202 +2,261 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { requireMember } from "@/lib/session";
 import { db, schema } from "@/db";
-import { checkMatchScore, type GameScore } from "@/lib/matchscore";
+import { withTransaction } from "@/db/pool";
+import { checkMatchScore } from "@/lib/matchscore";
+import { invitePartner, leaveLeague, LeagueError, registerForLeague, respondToInvite } from "@/lib/league";
 import { sendPartnerInvite, sendScoreReported } from "@/lib/email";
 
-export type ActionResult = { ok: boolean; error?: string };
+export type ActionResult = { ok: boolean; error?: string; message?: string };
+
+class ActionError extends Error {}
+
+/** Known failures come back as a readable message; anything unexpected is logged and still returns one instead of an error page. */
+function fail(e: unknown): ActionResult {
+  if (e instanceof LeagueError || e instanceof ActionError) return { ok: false, error: e.message };
+  console.error("league action failed", e);
+  return { ok: false, error: "Something went wrong — nothing was saved. Try again." };
+}
+
+function refresh() {
+  revalidatePath("/tournaments");
+  revalidatePath("/dashboard");
+}
 
 const registerSchema = z.object({
   tournamentId: z.uuid(),
-  teamName: z.string().trim().max(80).optional(),
-  partnerEmail: z.email().optional().or(z.literal("")),
+  teamName: z.string().trim().max(60, "Keep the team name under 60 characters."),
+  partnerEmail: z.union([z.literal(""), z.email("That partner email doesn't look right.")]),
 });
 
 export async function registerTeam(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireMember();
-  const parsed = registerSchema.safeParse(Object.fromEntries(formData));
+  const parsed = registerSchema.safeParse({
+    tournamentId: formData.get("tournamentId"),
+    teamName: String(formData.get("teamName") ?? ""),
+    partnerEmail: String(formData.get("partnerEmail") ?? "").trim(),
+  });
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  const { tournamentId, teamName, partnerEmail } = parsed.data;
 
-  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
-  if (!tournament) return { ok: false, error: "That tournament no longer exists." };
-  if (tournament.status !== "registration") return { ok: false, error: "Registration isn't open." };
-  if (tournament.registrationClosesAt && tournament.registrationClosesAt < new Date()) {
-    return { ok: false, error: "Registration has closed." };
-  }
-  if (tournament.eligibility === "competitive_only" && !user.onCompetitiveTeam) {
-    return { ok: false, error: "This tournament is for Competitive Team members only." };
-  }
-
-  const myMemberships = await db().query.tmTeamMembers.findMany({
-    where: and(eq(schema.tmTeamMembers.memberId, user.id), eq(schema.tmTeamMembers.inviteStatus, "accepted")),
-    with: { team: true },
-  });
-  if (myMemberships.some((m) => m.team.tournamentId === tournamentId && m.team.status !== "withdrawn")) {
-    return { ok: false, error: "You're already registered for this tournament." };
-  }
-
-  let partner: { id: string; email: string | null; name: string | null } | null = null;
-  if (partnerEmail) {
-    const [found] = await db()
-      .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
-      .from(schema.users)
-      .where(eq(schema.users.email, partnerEmail.toLowerCase()));
-    if (!found) {
-      return { ok: false, error: "That email doesn't have an account on the site yet." };
-    }
-    partner = found;
-  }
-
-  const [team] = await db()
-    .insert(schema.tmTeams)
-    .values({
-      tournamentId,
-      name: teamName || (partner ? `${user.name?.split(" ")[0] ?? "Team"} & ${partner.name?.split(" ")[0] ?? "Partner"}` : user.name || "Free agent"),
-      status: "registered",
-    })
-    .returning();
-
-  await db().insert(schema.tmTeamMembers).values({
-    teamId: team.id,
-    memberId: user.id,
-    isCaptain: true,
-    inviteStatus: "accepted",
-  });
-
-  if (partner) {
-    await db().insert(schema.tmTeamMembers).values({
-      teamId: team.id,
-      memberId: partner.id,
-      isCaptain: false,
-      inviteStatus: "pending",
+  let result;
+  try {
+    result = await registerForLeague({
+      tournamentId: parsed.data.tournamentId,
+      userId: user.id,
+      teamName: parsed.data.teamName,
+      partnerEmail: parsed.data.partnerEmail,
     });
-    if (partner.email) {
-      await sendPartnerInvite(
-        { email: partner.email, name: partner.name },
-        { captainName: user.name ?? null, tournamentName: tournament.name },
-      ).catch((err) => console.error("partner invite email failed", err));
-    }
+  } catch (e) {
+    return fail(e);
   }
 
-  revalidatePath("/tournaments");
-  return { ok: true };
+  // After commit — a failed email never undoes a registration. The invite also shows on their Tournaments tab.
+  if (result.partner) {
+    await sendPartnerInvite(
+      { email: result.partner.email, name: result.partner.name },
+      {
+        captainName: result.captain.name,
+        tournamentName: result.league.name,
+        teamName: result.teamName,
+        location: result.league.location,
+        registrationClosesAt: result.league.registrationClosesAt,
+      },
+    ).catch((err) => console.error("partner invite email failed", err));
+  }
+
+  refresh();
+  return {
+    ok: true,
+    message: result.partner
+      ? `You're in! Your partner has to accept before your team is complete.`
+      : `You're in! Add a partner anytime before registration closes, or exec will pair you.`,
+  };
 }
 
-export async function respondToInvite(teamId: string, accept: boolean): Promise<ActionResult> {
+const inviteSchema = z.object({
+  teamId: z.uuid(),
+  partnerEmail: z.email("Enter your partner's email."),
+});
+
+export async function invitePartnerAction(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireMember();
+  const parsed = inviteSchema.safeParse({
+    teamId: formData.get("teamId"),
+    partnerEmail: String(formData.get("partnerEmail") ?? "").trim(),
+  });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
 
-  const [row] = await db()
-    .select()
-    .from(schema.tmTeamMembers)
-    .where(and(eq(schema.tmTeamMembers.teamId, teamId), eq(schema.tmTeamMembers.memberId, user.id)));
-  if (!row || row.inviteStatus !== "pending") {
-    return { ok: false, error: "No pending invite found." };
+  let result;
+  try {
+    result = await invitePartner({ teamId: parsed.data.teamId, userId: user.id, partnerEmail: parsed.data.partnerEmail });
+  } catch (e) {
+    return fail(e);
   }
 
-  await db()
-    .update(schema.tmTeamMembers)
-    .set({ inviteStatus: accept ? "accepted" : "declined" })
-    .where(and(eq(schema.tmTeamMembers.teamId, teamId), eq(schema.tmTeamMembers.memberId, user.id)));
+  await sendPartnerInvite(
+    { email: result.partner.email, name: result.partner.name },
+    {
+      captainName: result.captain.name,
+      tournamentName: result.league.name,
+      teamName: result.teamName,
+      location: result.league.location,
+      registrationClosesAt: result.league.registrationClosesAt,
+    },
+  ).catch((err) => console.error("partner invite email failed", err));
 
-  revalidatePath("/tournaments");
+  refresh();
+  return { ok: true, message: "Invite sent." };
+}
+
+const teamIdSchema = z.uuid();
+
+export async function respondToInviteAction(teamId: string, accept: boolean): Promise<ActionResult> {
+  const user = await requireMember();
+  if (!teamIdSchema.safeParse(teamId).success || typeof accept !== "boolean") {
+    return { ok: false, error: "That invite is no longer open." };
+  }
+  try {
+    await respondToInvite({ teamId, userId: user.id, accept });
+  } catch (e) {
+    return fail(e);
+  }
+  refresh();
   return { ok: true };
 }
+
+export async function leaveLeagueAction(teamId: string): Promise<ActionResult> {
+  const user = await requireMember();
+  if (!teamIdSchema.safeParse(teamId).success) return { ok: false, error: "That team no longer exists." };
+  try {
+    await leaveLeague({ teamId, userId: user.id });
+  } catch (e) {
+    return fail(e);
+  }
+  refresh();
+  return { ok: true };
+}
+
+/* ── scores ───────────────────────────────────────────────────────────── */
 
 const reportSchema = z.object({
   matchId: z.uuid(),
-  games: z.string(), // JSON-encoded GameScore[]
+  games: z.array(z.tuple([z.number(), z.number()])).min(1).max(5),
 });
+
+/** Confirmed players on the given teams, with contact info for notifications. */
+async function matchPlayers(teamIds: string[]) {
+  return db()
+    .select({
+      teamId: schema.tmTeamMembers.teamId,
+      memberId: schema.tmTeamMembers.memberId,
+      email: schema.users.email,
+      name: schema.users.name,
+    })
+    .from(schema.tmTeamMembers)
+    .innerJoin(schema.users, eq(schema.tmTeamMembers.memberId, schema.users.id))
+    .where(and(inArray(schema.tmTeamMembers.teamId, teamIds), eq(schema.tmTeamMembers.inviteStatus, "accepted")));
+}
 
 export async function reportScore(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireMember();
-  const parsed = reportSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { ok: false, error: "Invalid input." };
 
-  let games: GameScore[];
+  let raw: unknown;
   try {
-    games = JSON.parse(parsed.data.games);
+    raw = JSON.parse(String(formData.get("games") ?? ""));
   } catch {
-    return { ok: false, error: "Invalid score format." };
+    return { ok: false, error: "Enter the score for each game." };
   }
+  const parsed = reportSchema.safeParse({ matchId: formData.get("matchId"), games: raw });
+  if (!parsed.success) return { ok: false, error: "Enter the score for each game." };
 
-  const check = checkMatchScore(games);
+  const check = checkMatchScore(parsed.data.games);
   if (!check.ok) return { ok: false, error: check.error };
 
-  const [match] = await db().select().from(schema.matches).where(eq(schema.matches.id, parsed.data.matchId));
-  if (!match || !match.teamAId || !match.teamBId) return { ok: false, error: "That match no longer exists." };
-  if (match.status !== "pending") return { ok: false, error: "This match already has a reported score." };
+  let notify: { email: string; name: string | null }[] = [];
+  let tournamentName = "your league";
+  try {
+    await withTransaction(async (tx) => {
+      const [match] = await tx
+        .select()
+        .from(schema.matches)
+        .where(eq(schema.matches.id, parsed.data.matchId))
+        .for("update");
+      if (!match || !match.teamAId || !match.teamBId) throw new ActionError("That match no longer exists.");
+      if (match.status !== "pending") throw new ActionError("This match already has a score reported.");
 
-  const players = await db()
-    .select({ teamId: schema.tmTeamMembers.teamId, memberId: schema.tmTeamMembers.memberId })
-    .from(schema.tmTeamMembers)
-    .where(
-      and(
-        eq(schema.tmTeamMembers.memberId, user.id),
-        eq(schema.tmTeamMembers.inviteStatus, "accepted"),
-      ),
-    );
-  const myTeamId = players.find((p) => p.teamId === match.teamAId || p.teamId === match.teamBId)?.teamId;
-  if (!myTeamId) return { ok: false, error: "You're not on either team for this match." };
+      const [tournament] = await tx.select().from(schema.tournaments).where(eq(schema.tournaments.id, match.tournamentId));
+      if (!tournament?.poolsAnnouncedAt || tournament.status === "complete") {
+        throw new ActionError("Scores can only be reported while the league is being played.");
+      }
 
-  const winnerTeamId = check.winner === "A" ? match.teamAId : match.teamBId;
+      const players = await matchPlayers([match.teamAId, match.teamBId]);
+      if (!players.some((p) => p.memberId === user.id)) throw new ActionError("You're not playing in this match.");
 
-  await db().insert(schema.matchReports).values({
-    matchId: match.id,
-    reportedBy: user.id,
-    games,
-    winnerTeamId,
-  });
-  await db().update(schema.matches).set({ status: "reported" }).where(eq(schema.matches.id, match.id));
+      await tx.insert(schema.matchReports).values({
+        matchId: match.id,
+        reportedBy: user.id,
+        games: parsed.data.games,
+        winnerTeamId: check.winner === "A" ? match.teamAId : match.teamBId,
+      });
+      await tx.update(schema.matches).set({ status: "reported" }).where(eq(schema.matches.id, match.id));
 
-  const tournament = await db().query.tournaments.findFirst({ where: eq(schema.tournaments.id, match.tournamentId) });
-  const everyone = await db().query.tmTeamMembers.findMany({
-    where: and(eq(schema.tmTeamMembers.inviteStatus, "accepted")),
-    with: { member: true },
-  });
-  const notify = everyone.filter(
-    (p) => (p.teamId === match.teamAId || p.teamId === match.teamBId) && p.memberId !== user.id,
-  );
-  const summary = games.map(([a, b]) => `${a}-${b}`).join(", ");
+      tournamentName = tournament.name;
+      notify = players.filter((p) => p.memberId !== user.id);
+    });
+  } catch (e) {
+    return fail(e);
+  }
+
+  const summary = parsed.data.games.map(([a, b]) => `${a}-${b}`).join(", ");
   for (const p of notify) {
-    if (!p.member.email) continue;
     await sendScoreReported(
-      { email: p.member.email, name: p.member.name },
-      { tournamentName: tournament?.name ?? "your tournament", reporterName: user.name ?? null, summary },
+      { email: p.email, name: p.name },
+      { tournamentName, reporterName: user.name ?? null, summary },
     ).catch((err) => console.error("score-reported email failed", err));
   }
 
-  revalidatePath("/tournaments");
-  return { ok: true };
+  refresh();
+  return { ok: true, message: "Score submitted — it confirms automatically unless someone disputes it." };
 }
 
-const disputeSchema = z.object({ matchId: z.uuid(), reason: z.string().trim().min(1).max(500) });
+const disputeSchema = z.object({ matchId: z.uuid(), reason: z.string().trim().min(1, "Say what's wrong.").max(500) });
 
 export async function disputeScore(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireMember();
-  const parsed = disputeSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) return { ok: false, error: "Invalid input." };
+  const parsed = disputeSchema.safeParse({ matchId: formData.get("matchId"), reason: formData.get("reason") });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
 
-  const [match] = await db().select().from(schema.matches).where(eq(schema.matches.id, parsed.data.matchId));
-  if (!match || match.status !== "reported") return { ok: false, error: "No pending report to dispute." };
+  try {
+    await withTransaction(async (tx) => {
+      const [match] = await tx
+        .select()
+        .from(schema.matches)
+        .where(eq(schema.matches.id, parsed.data.matchId))
+        .for("update");
+      if (!match || match.status !== "reported" || !match.teamAId || !match.teamBId) {
+        throw new ActionError("There's no reported score to dispute on this match.");
+      }
 
-  const [report] = await db()
-    .select()
-    .from(schema.matchReports)
-    .where(and(eq(schema.matchReports.matchId, match.id)))
-    .orderBy(schema.matchReports.createdAt);
-  if (!report) return { ok: false, error: "No report found for this match." };
-  if (report.reportedBy === user.id) return { ok: false, error: "You can't dispute your own report." };
+      const players = await matchPlayers([match.teamAId, match.teamBId]);
+      if (!players.some((p) => p.memberId === user.id)) throw new ActionError("You're not playing in this match.");
 
-  await db()
-    .update(schema.matchReports)
-    .set({ disputedBy: user.id, disputeReason: parsed.data.reason })
-    .where(eq(schema.matchReports.id, report.id));
-  await db().update(schema.matches).set({ status: "disputed" }).where(eq(schema.matches.id, match.id));
+      const [report] = await tx.select().from(schema.matchReports).where(eq(schema.matchReports.matchId, match.id));
+      if (!report || report.confirmedAt) throw new ActionError("That score is already confirmed.");
+      if (report.reportedBy === user.id) throw new ActionError("You can't dispute your own report.");
 
-  revalidatePath("/tournaments");
-  return { ok: true };
+      await tx
+        .update(schema.matchReports)
+        .set({ disputedBy: user.id, disputeReason: parsed.data.reason })
+        .where(eq(schema.matchReports.id, report.id));
+      await tx.update(schema.matches).set({ status: "disputed" }).where(eq(schema.matches.id, match.id));
+    });
+  } catch (e) {
+    return fail(e);
+  }
+
+  refresh();
+  return { ok: true, message: "Disputed — an admin will sort it out." };
 }

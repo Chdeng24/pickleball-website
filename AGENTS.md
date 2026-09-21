@@ -33,7 +33,7 @@ npm run roster:import roster.csv -- --commit
 1. `src/lib/access.ts` and `src/lib/standings.ts` are tested and correct — do not
    change their behaviour.
 2. All club copy lives in `src/lib/content.ts`. Never hardcode it in a component.
-3. `db()` (neon-http) cannot do transactions. Transactional writes use `txDb()`.
+3. `db()` (neon-http) cannot do transactions. Transactional writes use `withTransaction()` from `src/db/pool.ts` (fresh pool per call — never cache it, Workers forbids cross-request sockets).
 4. Re-check authorization inside every server action. Hiding a button is not
    access control.
 5. No border-radius anywhere — sharp corners are the brand.

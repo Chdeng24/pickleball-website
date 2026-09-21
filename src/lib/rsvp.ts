@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, ne } from "drizzle-orm";
-import { txDb } from "@/db/pool";
+import { withTransaction } from "@/db/pool";
 import { db, schema } from "@/db";
 import {
   RsvpError,
@@ -29,7 +29,7 @@ export async function rsvp(
   eventId: string,
   memberId: string,
 ): Promise<{ status: "confirmed" | "waitlist"; position: number }> {
-  return txDb().transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     const [event] = await tx
       .select()
       .from(schema.events)
@@ -84,7 +84,7 @@ export async function cancelRsvp(
   eventId: string,
   memberId: string,
 ): Promise<{ promoted: { id: string; email: string; name: string | null } | null }> {
-  return txDb().transaction(async (tx) => {
+  return withTransaction(async (tx) => {
     await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for("update");
 
     const [existing] = await tx

@@ -114,13 +114,27 @@ for (const r of rows) {
   `;
 }
 
-/* Anyone already sitting in `pending` who is now on the roster gets promoted. */
+/* Everyone with an account who's on the roster gets flagged as such... */
+await sql`
+  UPDATE "user" u
+     SET on_roster = true
+    FROM roster_email r
+   WHERE lower(u.email) = r.email
+`;
+
+/*
+ * ...but only allowed-domain pending accounts are auto-approved — the same rule
+ * as first sign-in (src/lib/access.ts). A non-Berkeley roster email still
+ * needs an exec to approve it by hand.
+ */
+const domain = (process.env.ALLOWED_EMAIL_DOMAIN || "berkeley.edu").toLowerCase();
 const promoted = await sql`
   UPDATE "user" u
-     SET status = 'approved', on_roster = true
+     SET status = 'approved'
     FROM roster_email r
    WHERE lower(u.email) = r.email
      AND u.status = 'pending'
+     AND lower(u.email) LIKE ${"%@" + domain}
   RETURNING u.email
 `;
 
