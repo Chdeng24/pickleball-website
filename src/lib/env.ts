@@ -24,7 +24,7 @@ const schema = z.object({
    *          a coach) lands in `pending` for exec to approve with one click.
    * open   — any verified account is approved on first sign-in, roster or not.
    */
-  ROSTER_MODE: z.enum(["strict", "open"]).default("strict"),
+  ROSTER_MODE: z.enum(["strict", "domain", "open"]).default("strict"),
 
   /** Domain the roster auto-approve bypass checks. Not a sign-in restriction — see canSignIn(). */
   ALLOWED_EMAIL_DOMAIN: z.string().default("berkeley.edu"),
