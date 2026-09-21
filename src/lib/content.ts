@@ -13,6 +13,7 @@ export const club = {
   founded: "Fall 2025",
   foundedYear: 2025,
   email: "pickleballatberkeley@gmail.com",
+  url: "https://pickleballatberkeley.com",
   instagram: "https://instagram.com/pickleballatberkeley",
   instagramHandle: "@pickleballatberkeley",
   blurb:
@@ -129,6 +130,30 @@ export const tournamentPrograms = [
     ],
   },
 ];
+
+/** "How it works" steps on the Tournaments tab. `icon` maps to a lucide icon in the page. */
+export const leagueSteps = [
+  {
+    icon: "users",
+    title: "Sign up",
+    body: "Register solo or with a partner — free. One league per person: Beginner, Advanced, or Comp (Competitive Team only). No partner? Exec pairs solo players before the draw.",
+  },
+  {
+    icon: "trophy",
+    title: "Get drawn into a pool",
+    body: "When registration closes, exec draws pools of up to 8 teams in your division and emails everyone their opponents.",
+  },
+  {
+    icon: "calendar",
+    title: "Play your pool",
+    body: `Play every other team in your pool once — best of 3 at ${venue.name}, on whatever days work for both teams.`,
+  },
+  {
+    icon: "clipboard",
+    title: "Top teams move up",
+    body: "Any of the four players reports the score. Standings update live, and the top teams in each pool move up.",
+  },
+] as const;
 
 export const officers = [
   { name: "Sienna Lam", role: "President", year: "Senior", photo: null },

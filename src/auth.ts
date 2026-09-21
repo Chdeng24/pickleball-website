@@ -111,6 +111,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth(() => {
             role: access.role,
             status: access.status,
             onRoster: access.onRoster,
+            onCompetitiveTeam: roster?.competitive ?? false,
             // Prefer the roster's name — it's what exec typed, not a Google display name.
             name: roster?.name ?? user.name,
           })

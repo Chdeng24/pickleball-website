@@ -118,6 +118,19 @@ export function laInputToUtc(localValue: string): Date {
   return new Date(guess.getTime() + (guess.getTime() - shownAsUtc));
 }
 
+/**
+ * Like laInputToUtc, but the whole chosen minute counts: "11:59 PM" stays open
+ * through 11:59:59.999, which is what a person means by "until 11:59 PM".
+ */
+export function laDeadlineToUtc(localValue: string): Date {
+  return new Date(laInputToUtc(localValue).getTime() + 59_999);
+}
+
+/** "Sat, Sep 26 · 11:59 PM PDT" */
+export function formatDeadline(date: Date): string {
+  return `${dayFmt.format(date)} · ${formatEventTime(date)}`;
+}
+
 /** Inverse of laInputToUtc — pre-fills a datetime-local input from a stored UTC date. */
 export function utcToLaInputValue(date: Date): string {
   const parts = Object.fromEntries(

@@ -116,6 +116,23 @@ platform, so there's no separate R2 step needed for it at the sizes MEDIA.md
 targets (under ~4MB). If it ever grows past a few dozen MB of video, move it
 to R2 and serve it through a route handler instead — not needed today.
 
+## Email: verify the domain in Resend (do this before relying on emails)
+
+`EMAIL_FROM` starts as `onboarding@resend.dev`, Resend's shared test sender.
+Resend only lets that sender deliver to **the email address that owns the
+Resend account** — every other recipient (partner invites, RSVP
+confirmations, pool announcements, reminders) is rejected. The site never
+crashes over this (failures are logged in Cloudflare's Worker logs as
+"Resend rejected …"), and invites also show on the Tournaments tab, but
+members won't get the emails until the domain is verified:
+
+1. https://resend.com/domains → **Add Domain** → `pickleballatberkeley.com`.
+2. Resend offers to add the DNS records to Cloudflare automatically — accept
+   (or copy the records into Cloudflare → DNS by hand).
+3. Once it shows **Verified**:
+   `npx wrangler secret put EMAIL_FROM` → `Pickleball at Berkeley <noreply@pickleballatberkeley.com>`
+   (and the same value in `.env`).
+
 ## Why the club Gmail, not your personal account
 
 A Worker's secrets, R2 buckets, and DNS all live inside one Cloudflare
@@ -132,8 +149,9 @@ Super Administrator and remove yourself later — no redeploy needed.
 
 - **Google Calendar sync** (Tranche E in `TASKS.md`) — post-MVP, not part of
   this deploy pass.
-- **Social Team League** (registration, pool draws, score reporting/disputes,
-  weekly nudges) is built and live — see `npx wrangler secret put CRON_SECRET`
+- **Pickleball League** (registration with player caps, partner invites,
+  free-agent pairing, pool draws, score reporting/disputes, weekly nudges) is
+  built and live — see `npx wrangler secret put CRON_SECRET`
   above and the `event-reminders.yml` / `weekly-nudges.yml` GitHub Actions
   workflows, which also drive the tournament auto-confirm and weekly nudge
   crons now (not just event reminders).

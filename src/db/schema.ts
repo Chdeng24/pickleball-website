@@ -97,6 +97,8 @@ export const rosterEmails = pgTable("roster_email", {
   email: text("email").notNull().unique(),
   name: text("name"),
   note: text("note"),
+  /** Competitive Team player — copied onto users.onCompetitiveTeam the first time they sign in. */
+  competitive: boolean("competitive").notNull().default(false),
   importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
   importedBy: uuid("imported_by").references(() => users.id, { onDelete: "set null" }),
 });
@@ -204,6 +206,10 @@ export const tournaments = pgTable("tournament", {
   division: divisionEnum("division").notNull(),
   eligibility: tournamentEligibilityEnum("eligibility").notNull().default("all"),
   status: tournamentStatusEnum("status").notNull().default("draft"),
+  /** Where matches are played — shown on the league card and in emails. */
+  location: text("location"),
+  /** Max players (not teams) who can hold a spot. A pending partner invite holds one. Null = uncapped. */
+  maxPlayers: integer("max_players"),
   registrationClosesAt: timestamp("registration_closes_at", { withTimezone: true }),
   /** Teams per pool. 8 gives each team 7 round-robin matches. */
   poolSize: integer("pool_size").notNull().default(8),
