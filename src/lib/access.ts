@@ -36,13 +36,16 @@ export function canSignIn(params: {
  *         enough. Everyone else (on-domain but off-roster, or off-domain and
  *         off-roster) also lands in `pending`, with the same escape hatch so
  *         a new member isn't hard-locked out at 9pm the night before practice.
+ * domain: any verified account on the allowed domain is approved
+ *         immediately, roster or not. Off-domain accounts still wait in
+ *         `pending`. The roster is still recorded (for Comp tracking).
  * open:   any verified account is approved immediately, roster or domain
  *         doesn't matter.
  */
 export function initialAccess(params: {
   email: string;
   onRoster: boolean;
-  rosterMode: "strict" | "open";
+  rosterMode: "strict" | "domain" | "open";
   allowedDomain: string;
   adminEmails: string[];
   execEmails: string[];
@@ -56,7 +59,10 @@ export function initialAccess(params: {
       : "member";
 
   const onAllowedDomain = email.endsWith(`@${params.allowedDomain.toLowerCase()}`);
-  const autoApproved = params.rosterMode === "open" || (params.onRoster && onAllowedDomain);
+  const autoApproved =
+    params.rosterMode === "open" ||
+    (params.rosterMode === "domain" && onAllowedDomain) ||
+    (params.onRoster && onAllowedDomain);
 
   // Exec and admin are always approved — they can't be locked out of their own site.
   const status: MemberStatus = role !== "member" || autoApproved ? "approved" : "pending";

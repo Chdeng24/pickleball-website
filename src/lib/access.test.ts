@@ -49,6 +49,18 @@ test("strict mode: matching case-insensitively — Berkeley.EDU still counts as 
   assert.equal(a.status, "approved");
 });
 
+test("domain mode: off-roster student is approved", () => {
+  const a = initialAccess({ email: "stranger@berkeley.edu", onRoster: false, rosterMode: "domain", ...roles });
+  assert.equal(a.status, "approved");
+  assert.equal(a.onRoster, false);
+});
+
+test("domain mode: off-domain account still waits for approval, even on the roster", () => {
+  assert.equal(initialAccess({ email: "randomguy@gmail.com", onRoster: false, rosterMode: "domain", ...roles }).status, "pending");
+  assert.equal(initialAccess({ email: "coach@gmail.com", onRoster: true, rosterMode: "domain", ...roles }).status, "pending");
+  assert.equal(initialAccess({ email: "x@berkeley.edu.evil.com", onRoster: false, rosterMode: "domain", ...roles }).status, "pending");
+});
+
 test("open mode: off-roster student is approved", () => {
   const a = initialAccess({ email: "stranger@berkeley.edu", onRoster: false, rosterMode: "open", ...roles });
   assert.equal(a.status, "approved");
