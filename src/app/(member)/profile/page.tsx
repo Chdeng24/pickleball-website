@@ -7,6 +7,7 @@ import { formatEventWhen } from "@/lib/dates";
 import { Kicker } from "@/components/ui/kicker";
 import { SignOutButton } from "@/components/site/sign-out-button";
 import { DuprForm } from "./dupr-form";
+import { skillLabel } from "@/lib/derive-level";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -43,11 +44,11 @@ export default async function ProfilePage() {
       <dl className="grid grid-cols-2 gap-4">
         <div className="border-2 border-navy-900/10 bg-white p-4">
           <p className="text-xs font-bold uppercase tracking-wide text-ink/40">Skill level</p>
-          <p className="mt-1 font-display text-lg font-bold capitalize text-navy-900">
-            {user.derivedLevel === "unknown" ? "Not yet set" : user.derivedLevel}
-          </p>
+          <p className="mt-1 font-display text-lg font-bold text-navy-900">{skillLabel(user)}</p>
           <p className="mt-1 text-xs text-ink/40">
-            Set automatically from your most recent practice RSVP.
+            {user.onCompetitiveTeam
+              ? "You're on the Competitive Team."
+              : "Set automatically from your most recent practice RSVP."}
           </p>
         </div>
         <div className="border-2 border-navy-900/10 bg-white p-4">

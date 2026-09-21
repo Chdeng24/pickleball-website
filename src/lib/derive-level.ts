@@ -35,3 +35,14 @@ export function nextDerivedLevel(current: Level, signals: LevelSignal[]): Level 
   const computed = deriveLevel(signals);
   return computed === "unknown" ? current : computed;
 }
+
+/**
+ * The level shown to people. Comp Team members are "Comp" regardless of
+ * practices; everyone else is Social, with the practice-derived level once
+ * they've been to one ("TBD" until then).
+ */
+export function skillLabel(u: { onCompetitiveTeam: boolean; derivedLevel: Level }): string {
+  if (u.onCompetitiveTeam) return "Comp";
+  if (u.derivedLevel === "unknown") return "Social · TBD";
+  return `Social · ${u.derivedLevel === "beginner" ? "Beginner" : "Advanced"}`;
+}

@@ -10,6 +10,7 @@ import { formatEventWhen } from "@/lib/dates";
 import { NoteForm } from "./note-form";
 import { RoleSelect } from "./role-select";
 import { CompetitiveToggle } from "./competitive-toggle";
+import { skillLabel } from "@/lib/derive-level";
 
 export const metadata: Metadata = { title: "Member Profile" };
 
@@ -67,7 +68,7 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
 
       <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Stat label="Status" value={member.status} />
-        <Stat label="Derived level" value={member.derivedLevel} />
+        <Stat label="Level" value={skillLabel(member)} />
         <Stat label="On roster" value={member.onRoster ? "Yes" : "No"} />
         <Stat label="Joined" value={member.createdAt.toLocaleDateString("en-US")} />
       </dl>
