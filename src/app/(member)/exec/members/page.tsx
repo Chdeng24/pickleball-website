@@ -5,6 +5,7 @@ import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
 import { PendingList } from "./pending-list";
 import { RosterImport } from "./roster-import";
+import { skillLabel } from "@/lib/derive-level";
 
 export const metadata: Metadata = { title: "Members" };
 
@@ -69,7 +70,6 @@ export default async function MembersPage() {
               <tr>
                 <th className="p-4">Name</th>
                 <th className="p-4">Role</th>
-                <th className="p-4">Team</th>
                 <th className="p-4">Level</th>
               </tr>
             </thead>
@@ -87,10 +87,9 @@ export default async function MembersPage() {
                     {m.onCompetitiveTeam ? (
                       <span className="bg-navy-900 px-2 py-0.5 text-xs font-bold uppercase text-gold-500">Comp</span>
                     ) : (
-                      "Social"
+                      skillLabel(m)
                     )}
                   </td>
-                  <td className="p-4 capitalize text-ink/70">{m.derivedLevel}</td>
                 </tr>
               ))}
             </tbody>

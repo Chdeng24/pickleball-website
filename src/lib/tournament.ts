@@ -81,14 +81,19 @@ export async function generateDraftDrawTx(tx: Tx, tournamentId: string): Promise
 
   const teams = await tx.query.tmTeams.findMany({
     where: and(eq(schema.tmTeams.tournamentId, tournamentId), eq(schema.tmTeams.status, "registered")),
-    with: { members: { with: { member: { columns: { derivedLevel: true } } } } },
+    with: { members: { with: { member: { columns: { derivedLevel: true, onCompetitiveTeam: true } } } } },
   });
 
   const ready = teams
     .filter((t) => isDrawReady(t.members))
     .map((t) => ({
       id: t.id,
-      level: teamLevel(t.members.filter((m) => m.inviteStatus === "accepted").map((m) => m.member.derivedLevel)),
+      level: teamLevel(
+        t.members
+          .filter((m) => m.inviteStatus === "accepted")
+          // Comp Team players seed as advanced even before their first Social practice.
+          .map((m) => (m.member.onCompetitiveTeam ? "advanced" : m.member.derivedLevel)),
+      ),
     }));
 
   if (ready.length < 2) throw new TournamentError("too_few_teams");

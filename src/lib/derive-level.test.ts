@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deriveLevel, nextDerivedLevel, type LevelSignal } from "./derive-level.ts";
+import { deriveLevel, nextDerivedLevel, skillLabel, type LevelSignal } from "./derive-level.ts";
 
 const d = (iso: string) => new Date(iso);
 
@@ -45,4 +45,15 @@ test("nextDerivedLevel never regresses a known level to unknown", () => {
 test("nextDerivedLevel updates when a newer practice signal exists", () => {
   const signals: LevelSignal[] = [{ level: "beginner", status: "confirmed", startsAt: d("2026-04-01") }];
   assert.equal(nextDerivedLevel("advanced", signals), "beginner");
+});
+
+test("skill label: Comp Team wins over any practice level", () => {
+  assert.equal(skillLabel({ onCompetitiveTeam: true, derivedLevel: "unknown" }), "Comp");
+  assert.equal(skillLabel({ onCompetitiveTeam: true, derivedLevel: "beginner" }), "Comp");
+});
+
+test("skill label: everyone else is Social, TBD until their first practice", () => {
+  assert.equal(skillLabel({ onCompetitiveTeam: false, derivedLevel: "unknown" }), "Social · TBD");
+  assert.equal(skillLabel({ onCompetitiveTeam: false, derivedLevel: "beginner" }), "Social · Beginner");
+  assert.equal(skillLabel({ onCompetitiveTeam: false, derivedLevel: "advanced" }), "Social · Advanced");
 });
