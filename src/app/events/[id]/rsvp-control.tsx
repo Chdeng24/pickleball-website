@@ -5,7 +5,8 @@ import { Drawer } from "vaul";
 import { toast } from "sonner";
 import NumberFlow from "@number-flow/react";
 import { CalendarCheck, X } from "lucide-react";
-import { rsvpToEvent, cancelEventRsvp, RSVP_ERROR_MESSAGES } from "../actions";
+import { rsvpToEvent, cancelEventRsvp } from "../actions";
+import { rsvpErrorCopy } from "@/lib/content";
 
 type MyRsvp = { status: "confirmed" | "waitlist"; position: number } | null;
 
@@ -39,15 +40,23 @@ export function RsvpControl({
     setOpen(false);
     startTransition(async () => {
       setOptimistic({ status: isFull ? "waitlist" : "confirmed", position: 0 });
-      const res = await rsvpToEvent(eventId);
-      if (res.ok) {
-        setOptimistic({ status: res.status, position: res.position });
-        toast.success(
-          res.status === "confirmed" ? "You're in! Confirmed." : `Added to the waitlist (#${res.position}).`,
-        );
-      } else {
+      try {
+        const res = await rsvpToEvent(eventId);
+        if (res.ok) {
+          setOptimistic({ status: res.status, position: res.position });
+          toast.success(
+            res.status === "confirmed" ? "You're in! Confirmed." : `Added to the waitlist (#${res.position}).`,
+          );
+        } else {
+          setOptimistic(myRsvp);
+          toast.error(rsvpErrorCopy[res.reason]);
+        }
+      } catch {
+        // The action never rejects on its own — this is the phone losing
+        // signal mid-tap. Roll the button back to server truth and say so,
+        // rather than letting the rejection blow up into the error page.
         setOptimistic(myRsvp);
-        toast.error(RSVP_ERROR_MESSAGES[res.reason as keyof typeof RSVP_ERROR_MESSAGES] ?? "Something went wrong.");
+        toast.error(rsvpErrorCopy.offline);
       }
     });
   }
@@ -56,12 +65,17 @@ export function RsvpControl({
     setOpen(false);
     startTransition(async () => {
       setOptimistic(null);
-      const res = await cancelEventRsvp(eventId);
-      if (res.ok) {
-        toast.success("Cancelled.");
-      } else {
+      try {
+        const res = await cancelEventRsvp(eventId);
+        if (res.ok) {
+          toast.success("Cancelled.");
+        } else {
+          setOptimistic(myRsvp);
+          toast.error(rsvpErrorCopy[res.reason]);
+        }
+      } catch {
         setOptimistic(myRsvp);
-        toast.error(RSVP_ERROR_MESSAGES[res.reason as keyof typeof RSVP_ERROR_MESSAGES] ?? "Something went wrong.");
+        toast.error(rsvpErrorCopy.offline);
       }
     });
   }

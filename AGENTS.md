@@ -19,8 +19,9 @@ Supporting docs:
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"   # node is not on PATH
 npm run dev          # localhost:3000
-npm test             # node --test over src/**/*.test.ts  (106 passing)
+npm test             # node --test over src/**/*.test.ts  (118 passing)
 npm run test:league  # signup edge cases against the real DB, always rolled back
+npm run test:rsvp    # RSVP edge cases + a 40-way race for 20 spots, against the real DB
 npm run lint
 npm run build
 npm run db:push      # apply schema to Neon
@@ -38,6 +39,10 @@ npm run roster:import roster.csv -- --commit
 4. Re-check authorization inside every server action. Hiding a button is not
    access control.
 5. No border-radius anywhere — sharp corners are the brand.
+6. A `"use server"` file may export **only** async functions. Next enforces this
+   at runtime, not build time, so an exported const there passes `npm run build`
+   and then breaks every action in the file in production. Shared values go in
+   `src/lib/content.ts`. `src/app/use-server-exports.test.ts` guards this.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

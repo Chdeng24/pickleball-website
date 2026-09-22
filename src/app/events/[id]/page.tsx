@@ -1,17 +1,19 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { CalendarDays, MapPin } from "lucide-react";
 import { db, schema } from "@/db";
 import { getSessionUser } from "@/lib/session";
 import { isActiveMember } from "@/lib/access";
 import { formatEventWhen } from "@/lib/dates";
 import { checkRsvpWindow } from "@/lib/rsvp-logic";
+import { listRsvps } from "@/lib/rsvp";
 import { Kicker } from "@/components/ui/kicker";
 import { MemberShell } from "@/components/site/member-shell";
 import { Header } from "@/components/site/header";
 import { Footer } from "@/components/site/footer";
 import { RsvpControl } from "./rsvp-control";
+import { AttendeeList, type Attendee } from "./attendee-list";
 
 export async function generateMetadata({
   params,
@@ -28,24 +30,22 @@ export default async function EventDetailPage({ params }: PageProps<"/events/[id
   const [event] = await db().select().from(schema.events).where(eq(schema.events.id, id));
   if (!event || !event.published) notFound();
 
-  const confirmedCount = await db().$count(
-    schema.rsvps,
-    and(eq(schema.rsvps.eventId, id), eq(schema.rsvps.status, "confirmed")),
-  );
+  // One read serves the count, this viewer's own row, and the public list —
+  // `listRsvps` already drops cancelled rows and orders confirmed-then-waitlist.
+  const rows = await listRsvps(id);
+  const pick = (status: "confirmed" | "waitlist"): Attendee[] =>
+    rows
+      .filter((r) => r.status === status)
+      .map((r) => ({ id: r.id, position: r.position, name: r.member.name, email: r.member.email }));
 
-  const myRsvpRow = user
-    ? (
-        await db()
-          .select({ status: schema.rsvps.status, position: schema.rsvps.position })
-          .from(schema.rsvps)
-          .where(and(eq(schema.rsvps.eventId, id), eq(schema.rsvps.memberId, user.id)))
-      )[0]
-    : undefined;
+  const confirmed = pick("confirmed");
+  const waitlist = pick("waitlist");
+  const confirmedCount = confirmed.length;
 
-  const myRsvp =
-    myRsvpRow && myRsvpRow.status !== "cancelled"
-      ? { status: myRsvpRow.status as "confirmed" | "waitlist", position: myRsvpRow.position }
-      : null;
+  const myRsvpRow = user ? rows.find((r) => r.memberId === user.id) : undefined;
+  const myRsvp = myRsvpRow
+    ? { status: myRsvpRow.status as "confirmed" | "waitlist", position: myRsvpRow.position }
+    : null;
 
   const gate = checkRsvpWindow(event, new Date());
   const windowState = gate.ok ? "open" : gate.reason === "not_open" || gate.reason === "past" ? gate.reason : "not_published";
@@ -81,6 +81,12 @@ export default async function EventDetailPage({ params }: PageProps<"/events/[id
           windowState={windowState}
         />
       </div>
+
+      <AttendeeList
+        confirmed={confirmed}
+        waitlist={waitlist}
+        visibility={user ? "full" : "abbreviated"}
+      />
     </div>
   );
 
