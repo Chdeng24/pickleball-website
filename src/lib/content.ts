@@ -139,6 +139,33 @@ export const errorCopy = {
   home: "Back to home",
 };
 
+/**
+ * Why an RSVP attempt was refused, in plain English. Keyed by `RsvpErrorReason`
+ * from `src/lib/rsvp-logic.ts`. Lives here, not in `events/actions.ts` — a
+ * `"use server"` file may only export async functions, so a plain object
+ * exported from there breaks every action in the file at runtime.
+ */
+export const rsvpErrorCopy = {
+  not_found: "That event no longer exists.",
+  not_published: "This event isn't open yet.",
+  not_open: "RSVPs aren't open for this event yet.",
+  past: "This event has already happened.",
+  already_rsvpd: "You're already signed up for this.",
+  not_rsvpd: "You're not signed up for this.",
+  unknown: "Something went wrong. Try again.",
+  /** The request never reached the server — usually a phone losing signal. */
+  offline: "Couldn't reach the server. Check your connection and try again.",
+} as const;
+
+/** The public "who's coming" list on an event page. */
+export const rsvpListCopy = {
+  confirmed: "Who's coming",
+  waitlist: "Waitlist",
+  empty: "Nobody yet — be the first.",
+  /** Shown to signed-out visitors, who only see first name + last initial. */
+  signedOutNote: "Sign in to see full names.",
+};
+
 /** "How it works" steps on the Tournaments tab. `icon` maps to a lucide icon in the page. */
 export const leagueSteps = [
   {

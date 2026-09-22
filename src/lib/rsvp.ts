@@ -1,6 +1,6 @@
 import "server-only";
 import { and, asc, eq, ne } from "drizzle-orm";
-import { withTransaction } from "@/db/pool";
+import { withTransaction, type Tx } from "@/db/pool";
 import { db, schema } from "@/db";
 import {
   RsvpError,
@@ -29,50 +29,63 @@ export async function rsvp(
   eventId: string,
   memberId: string,
 ): Promise<{ status: "confirmed" | "waitlist"; position: number }> {
-  return withTransaction(async (tx) => {
-    const [event] = await tx
-      .select()
-      .from(schema.events)
-      .where(eq(schema.events.id, eventId))
-      .for("update");
-    if (!event) throw new RsvpError("not_found");
+  return withTransaction((tx) => rsvpTx(tx, eventId, memberId));
+}
 
-    const gate = checkRsvpWindow(event, new Date());
-    if (!gate.ok) throw new RsvpError(gate.reason);
+/**
+ * The body of `rsvp`, taking a caller-supplied transaction.
+ *
+ * Split out so `npm run test:rsvp` can drive it against the real database
+ * inside a transaction it always rolls back — the same pattern the league
+ * sign-up code uses. Production always reaches it through `rsvp` above.
+ */
+export async function rsvpTx(
+  tx: Tx,
+  eventId: string,
+  memberId: string,
+): Promise<{ status: "confirmed" | "waitlist"; position: number }> {
+  const [event] = await tx
+    .select()
+    .from(schema.events)
+    .where(eq(schema.events.id, eventId))
+    .for("update");
+  if (!event) throw new RsvpError("not_found");
 
-    const [existing] = await tx
-      .select()
-      .from(schema.rsvps)
+  const gate = checkRsvpWindow(event, new Date());
+  if (!gate.ok) throw new RsvpError(gate.reason);
+
+  const [existing] = await tx
+    .select()
+    .from(schema.rsvps)
+    .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.memberId, memberId)));
+
+  const action = resolveInsertOrReactivate(existing?.status ?? null);
+  if (action === "reject") throw new RsvpError("already_rsvpd");
+
+  const confirmedCount = await tx.$count(
+    schema.rsvps,
+    and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "confirmed")),
+  );
+  const status = decideStatus(confirmedCount, event.capacity);
+
+  const sameStatusCount = await tx.$count(
+    schema.rsvps,
+    and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, status)),
+  );
+  const position = sameStatusCount + 1;
+
+  if (action === "insert") {
+    await tx.insert(schema.rsvps).values({ eventId, memberId, status, position });
+  } else {
+    // Reactivating a cancelled row — update in place. The UNIQUE(event_id,
+    // member_id) constraint means this can never collide with a fresh insert.
+    await tx
+      .update(schema.rsvps)
+      .set({ status, position })
       .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.memberId, memberId)));
+  }
 
-    const action = resolveInsertOrReactivate(existing?.status ?? null);
-    if (action === "reject") throw new RsvpError("already_rsvpd");
-
-    const confirmedCount = await tx.$count(
-      schema.rsvps,
-      and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "confirmed")),
-    );
-    const status = decideStatus(confirmedCount, event.capacity);
-
-    const sameStatusCount = await tx.$count(
-      schema.rsvps,
-      and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, status)),
-    );
-    const position = sameStatusCount + 1;
-
-    if (action === "insert") {
-      await tx.insert(schema.rsvps).values({ eventId, memberId, status, position });
-    } else {
-      // Reactivating a cancelled row — update in place. The UNIQUE(event_id,
-      // member_id) constraint means this can never collide with a fresh insert.
-      await tx
-        .update(schema.rsvps)
-        .set({ status, position })
-        .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.memberId, memberId)));
-    }
-
-    return { status, position };
-  });
+  return { status, position };
 }
 
 /**
@@ -84,74 +97,81 @@ export async function cancelRsvp(
   eventId: string,
   memberId: string,
 ): Promise<{ promoted: { id: string; email: string; name: string | null } | null }> {
-  return withTransaction(async (tx) => {
-    await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for("update");
+  return withTransaction((tx) => cancelRsvpTx(tx, eventId, memberId));
+}
 
-    const [existing] = await tx
-      .select()
-      .from(schema.rsvps)
-      .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.memberId, memberId)));
+/** The body of `cancelRsvp`, taking a caller-supplied transaction. See `rsvpTx`. */
+export async function cancelRsvpTx(
+  tx: Tx,
+  eventId: string,
+  memberId: string,
+): Promise<{ promoted: { id: string; email: string; name: string | null } | null }> {
+  await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for("update");
 
-    if (!existing || existing.status === "cancelled") throw new RsvpError("not_rsvpd");
+  const [existing] = await tx
+    .select()
+    .from(schema.rsvps)
+    .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.memberId, memberId)));
 
-    const wasConfirmed = existing.status === "confirmed";
+  if (!existing || existing.status === "cancelled") throw new RsvpError("not_rsvpd");
 
-    await tx
-      .update(schema.rsvps)
-      .set({ status: "cancelled" })
-      .where(eq(schema.rsvps.id, existing.id));
+  const wasConfirmed = existing.status === "confirmed";
 
-    // Close the gap left in whichever list the cancelled row came out of.
-    const remaining = await tx
-      .select()
-      .from(schema.rsvps)
-      .where(
-        and(
-          eq(schema.rsvps.eventId, eventId),
-          eq(schema.rsvps.status, existing.status),
-          ne(schema.rsvps.id, existing.id),
-        ),
-      )
-      .orderBy(asc(schema.rsvps.position));
+  await tx
+    .update(schema.rsvps)
+    .set({ status: "cancelled" })
+    .where(eq(schema.rsvps.id, existing.id));
 
-    for (const row of repackPositions(remaining)) {
-      await tx.update(schema.rsvps).set({ position: row.position }).where(eq(schema.rsvps.id, row.id));
-    }
+  // Close the gap left in whichever list the cancelled row came out of.
+  const remaining = await tx
+    .select()
+    .from(schema.rsvps)
+    .where(
+      and(
+        eq(schema.rsvps.eventId, eventId),
+        eq(schema.rsvps.status, existing.status),
+        ne(schema.rsvps.id, existing.id),
+      ),
+    )
+    .orderBy(asc(schema.rsvps.position));
 
-    if (!wasConfirmed) return { promoted: null };
+  for (const row of repackPositions(remaining)) {
+    await tx.update(schema.rsvps).set({ position: row.position }).where(eq(schema.rsvps.id, row.id));
+  }
 
-    // A confirmed slot opened up — pull the earliest waitlisted member in.
-    const waitlist = await tx
-      .select()
-      .from(schema.rsvps)
-      .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "waitlist")))
-      .orderBy(asc(schema.rsvps.position));
+  if (!wasConfirmed) return { promoted: null };
 
-    const promotee = selectPromotion(waitlist);
-    if (!promotee) return { promoted: null };
+  // A confirmed slot opened up — pull the earliest waitlisted member in.
+  const waitlist = await tx
+    .select()
+    .from(schema.rsvps)
+    .where(and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "waitlist")))
+    .orderBy(asc(schema.rsvps.position));
 
-    const confirmedCount = await tx.$count(
-      schema.rsvps,
-      and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "confirmed")),
-    );
+  const promotee = selectPromotion(waitlist);
+  if (!promotee) return { promoted: null };
 
-    await tx
-      .update(schema.rsvps)
-      .set({ status: "confirmed", position: confirmedCount + 1 })
-      .where(eq(schema.rsvps.id, promotee.id));
+  const confirmedCount = await tx.$count(
+    schema.rsvps,
+    and(eq(schema.rsvps.eventId, eventId), eq(schema.rsvps.status, "confirmed")),
+  );
 
-    const stillWaitlisted = waitlist.filter((r) => r.id !== promotee.id);
-    for (const row of repackPositions(stillWaitlisted)) {
-      await tx.update(schema.rsvps).set({ position: row.position }).where(eq(schema.rsvps.id, row.id));
-    }
+  await tx
+    .update(schema.rsvps)
+    .set({ status: "confirmed", position: confirmedCount + 1 })
+    .where(eq(schema.rsvps.id, promotee.id));
 
-    const [promotedUser] = await tx
-      .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
-      .from(schema.users)
-      .where(eq(schema.users.id, promotee.memberId));
+  const stillWaitlisted = waitlist.filter((r) => r.id !== promotee.id);
+  for (const row of repackPositions(stillWaitlisted)) {
+    await tx.update(schema.rsvps).set({ position: row.position }).where(eq(schema.rsvps.id, row.id));
+  }
 
-    return { promoted: promotedUser ?? null };
-  });
+  const [promotedUser] = await tx
+    .select({ id: schema.users.id, email: schema.users.email, name: schema.users.name })
+    .from(schema.users)
+    .where(eq(schema.users.id, promotee.memberId));
+
+  return { promoted: promotedUser ?? null };
 }
 
 export type RsvpWithMember = typeof schema.rsvps.$inferSelect & {
