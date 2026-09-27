@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { eq } from "drizzle-orm";
+import { and, eq, lte } from "drizzle-orm";
 import { CalendarDays, Trophy, Users } from "lucide-react";
 import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
@@ -12,12 +12,32 @@ export default async function ExecHomePage() {
 
   const pendingCount = await db().$count(schema.users, eq(schema.users.status, "pending"));
 
+  // Practices that have started but still have confirmed spots nobody has
+  // marked — the nudge to take attendance before it's forgotten.
+  const unmarked = await db()
+    .select({ eventId: schema.rsvps.eventId })
+    .from(schema.rsvps)
+    .innerJoin(schema.events, eq(schema.rsvps.eventId, schema.events.id))
+    .where(
+      and(
+        eq(schema.events.type, "practice"),
+        eq(schema.rsvps.status, "confirmed"),
+        eq(schema.rsvps.attendance, "unmarked"),
+        lte(schema.events.startsAt, new Date()),
+      ),
+    );
+  const sessionsToMark = new Set(unmarked.map((r) => r.eventId)).size;
+
   const cards = [
     {
       href: "/exec/events",
       icon: CalendarDays,
       title: "Events",
-      body: "Create practices and socials, manage RSVPs.",
+      body:
+        sessionsToMark > 0
+          ? `${sessionsToMark} session(s) need check-in`
+          : "Create practices and socials, manage RSVPs.",
+      badge: sessionsToMark > 0 ? sessionsToMark : undefined,
     },
     {
       href: "/exec/members",

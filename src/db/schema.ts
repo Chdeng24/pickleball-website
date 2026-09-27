@@ -33,6 +33,12 @@ export const rsvpStatusEnum = pgEnum("rsvp_status", [
   "waitlist",
   "cancelled",
 ]);
+/**
+ * Did they actually turn up? Recorded by exec after the session, never by the
+ * member. `unmarked` is the resting state — a session nobody has taken
+ * attendance for yet must never look like a room full of no-shows.
+ */
+export const attendanceEnum = pgEnum("attendance", ["unmarked", "present", "no_show"]);
 
 /* ─── Auth.js core tables ────────────────────────────────────────────────── */
 /* `users` is extended with club fields — one row per person, no join needed. */
@@ -152,7 +158,14 @@ export const rsvps = pgTable(
     status: rsvpStatusEnum("status").notNull(),
     /** Ordering within confirmed/waitlist. Drives auto-promotion. */
     position: integer("position").notNull(),
+    /** Exec-recorded attendance. A `no_show` here is what becomes a strike — see `src/lib/strikes.ts`. */
+    attendance: attendanceEnum("attendance").notNull().default("unmarked"),
+    /** Set when marked present, cleared otherwise. */
     checkedInAt: timestamp("checked_in_at", { withTimezone: true }),
+    /** Which exec recorded it. This policy removes people from the club, so it keeps an audit trail. */
+    attendanceMarkedBy: uuid("attendance_marked_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   // One row per person per event — the backstop behind the capacity transaction.

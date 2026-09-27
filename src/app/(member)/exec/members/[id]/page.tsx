@@ -11,6 +11,10 @@ import { NoteForm } from "./note-form";
 import { RoleSelect } from "./role-select";
 import { CompetitiveToggle } from "./competitive-toggle";
 import { skillLabel } from "@/lib/derive-level";
+import { strikeCounts, strikeHistory } from "@/lib/rsvp";
+import { STRIKE_LIMIT, strikeState } from "@/lib/strikes";
+import { attendanceCopy } from "@/lib/content";
+import { StrikeBadge } from "@/components/site/strike-badge";
 
 export const metadata: Metadata = { title: "Member Profile" };
 
@@ -37,6 +41,10 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
     .where(eq(schema.rsvps.memberId, id))
     .orderBy(desc(schema.events.startsAt))
     .limit(10);
+
+  // Exec-only — the member's own profile page never reads either of these.
+  const strikes = (await strikeCounts([id])).get(id) ?? 0;
+  const noShows = strikes > 0 ? await strikeHistory(id) : [];
 
   return (
     <div className="space-y-10">
@@ -66,12 +74,52 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      {strikeState(strikes) === "flagged" && (
+        <div className="border-2 border-red-700 bg-red-50 p-5">
+          <p className="font-display text-sm font-bold uppercase tracking-wide text-red-800">
+            {attendanceCopy.flagged}
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-red-900/70">{attendanceCopy.policy}</p>
+        </div>
+      )}
+
+      <dl className="grid grid-cols-2 gap-4 sm:grid-cols-5">
         <Stat label="Status" value={member.status} />
         <Stat label="Level" value={skillLabel(member)} />
         <Stat label="On roster" value={member.onRoster ? "Yes" : "No"} />
         <Stat label="Joined" value={member.createdAt.toLocaleDateString("en-US")} />
+        <Stat label={attendanceCopy.strikes} value={`${strikes} / ${STRIKE_LIMIT}`} />
       </dl>
+
+      <section>
+        <h2 className="font-display text-sm font-bold uppercase tracking-wide text-ink/50">
+          {attendanceCopy.strikes}{" "}
+          <span className="normal-case text-ink/35">— never shown to the member</span>
+        </h2>
+        {noShows.length === 0 ? (
+          <p className="mt-3 text-sm text-ink/40">{attendanceCopy.noStrikes}</p>
+        ) : (
+          <>
+            <div className="mt-3">
+              <StrikeBadge strikes={strikes} />
+            </div>
+            <ul className="mt-3 divide-y divide-navy-900/5 border-2 border-navy-900/10 bg-white">
+              {noShows.map((n) => (
+                <li key={n.rsvpId} className="flex flex-wrap items-center justify-between gap-2 p-4 text-sm">
+                  <Link href={`/exec/events/${n.eventId}/rsvps`} className="font-medium text-navy-900 hover:underline">
+                    {n.title}
+                  </Link>
+                  <span className="text-ink/50">{n.startsAt.toLocaleDateString("en-US")}</span>
+                  <span className="font-semibold uppercase text-red-700">{attendanceCopy.noShow}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-ink/40">
+              Correct a mistake from the session&apos;s check-in page — the strike goes with it.
+            </p>
+          </>
+        )}
+      </section>
 
       <section>
         <h2 className="font-display text-sm font-bold uppercase tracking-wide text-ink/50">
@@ -85,7 +133,19 @@ export default async function MemberDetailPage({ params }: PageProps<"/exec/memb
               <li key={r.rsvp.id} className="flex items-center justify-between p-4 text-sm">
                 <span className="font-medium text-navy-900">{r.event.title}</span>
                 <span className="text-ink/50">{formatEventWhen(r.event.startsAt, r.event.endsAt)}</span>
-                <span className="capitalize text-ink/60">{r.rsvp.status}</span>
+                <span className="capitalize text-ink/60">
+                  {r.rsvp.status}
+                  {r.rsvp.attendance === "no_show" && (
+                    <span className="ml-2 font-semibold uppercase text-red-700">
+                      {attendanceCopy.noShow}
+                    </span>
+                  )}
+                  {r.rsvp.attendance === "present" && (
+                    <span className="ml-2 font-semibold uppercase text-green-700">
+                      {attendanceCopy.present}
+                    </span>
+                  )}
+                </span>
               </li>
             ))}
           </ul>

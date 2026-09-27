@@ -19,16 +19,20 @@ Supporting docs:
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"   # node is not on PATH
 npm run dev          # localhost:3000
-npm test             # node --test over src/**/*.test.ts  (118 passing)
+npm test             # node --test over src/**/*.test.ts  (134 passing)
 npm run test:league  # signup edge cases against the real DB, always rolled back
-npm run test:rsvp    # RSVP edge cases + a 40-way race for 20 spots, against the real DB
+npm run test:rsvp    # RSVP + check-in edge cases, a 40-way race for 20 spots, and a check-in race, against the real DB
 npm run lint
 npm run build
-npm run db:push      # apply schema to Neon
+npm run db:push      # apply schema to Neon — see the warning below before using it
 npm run roster:import roster.csv -- --commit
 ```
 
 **After every task: `npm test && npm run lint && npm run build` must all pass.**
+
+**`db:push` warning:** drizzle-kit misreads the existing `rsvp_event_member_unique`
+constraint as missing and offers to **truncate the `rsvp` table**. Never accept
+that. For additive changes, apply the DDL directly in one transaction instead.
 
 ## Non-negotiables
 

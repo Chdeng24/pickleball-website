@@ -1,15 +1,17 @@
 import "server-only";
-import { and, asc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { withTransaction, type Tx } from "@/db/pool";
 import { db, schema } from "@/db";
 import {
   RsvpError,
+  checkCancelWindow,
   checkRsvpWindow,
   decideStatus,
   repackPositions,
   resolveInsertOrReactivate,
   selectPromotion,
 } from "./rsvp-logic";
+import type { AttendanceState } from "./strikes";
 
 export { RsvpError } from "./rsvp-logic";
 export type { RsvpErrorReason } from "./rsvp-logic";
@@ -106,7 +108,15 @@ export async function cancelRsvpTx(
   eventId: string,
   memberId: string,
 ): Promise<{ promoted: { id: string; email: string; name: string | null } | null }> {
-  await tx.select().from(schema.events).where(eq(schema.events.id, eventId)).for("update");
+  const [event] = await tx
+    .select()
+    .from(schema.events)
+    .where(eq(schema.events.id, eventId))
+    .for("update");
+  if (!event) throw new RsvpError("not_found");
+
+  const gate = checkCancelWindow(event, new Date());
+  if (!gate.ok) throw new RsvpError(gate.reason);
 
   const [existing] = await tx
     .select()
@@ -227,4 +237,108 @@ export async function refreshDerivedLevel(memberId: string): Promise<void> {
   if (next !== current?.derivedLevel) {
     await db().update(schema.users).set({ derivedLevel: next }).where(eq(schema.users.id, memberId));
   }
+}
+
+/**
+ * Record one member's attendance. The `status = 'confirmed'` guard sits in the
+ * UPDATE itself, not just in the caller's pre-check, so nothing that loses a
+ * race can mark a row that isn't holding a confirmed spot. Returns whether a
+ * row was updated.
+ */
+export async function setAttendanceTx(
+  tx: Tx,
+  rsvpId: string,
+  next: AttendanceState,
+  execId: string,
+): Promise<boolean> {
+  const updated = await tx
+    .update(schema.rsvps)
+    .set({
+      attendance: next,
+      checkedInAt: next === "present" ? new Date() : null,
+      attendanceMarkedBy: next === "unmarked" ? null : execId,
+    })
+    .where(and(eq(schema.rsvps.id, rsvpId), eq(schema.rsvps.status, "confirmed")))
+    .returning({ id: schema.rsvps.id });
+  return updated.length > 0;
+}
+
+/**
+ * Mark every confirmed, still-unmarked RSVP for a session as a no-show.
+ *
+ * One UPDATE whose WHERE Postgres re-checks against the latest row version, so
+ * a check-in that commits first is never overwritten, and one that commits
+ * after simply wins (they were there). Waitlisted and cancelled rows are
+ * unreachable. Returns how many rows it marked.
+ */
+export async function markRemainingNoShowTx(tx: Tx, eventId: string, execId: string): Promise<number> {
+  const updated = await tx
+    .update(schema.rsvps)
+    .set({ attendance: "no_show", checkedInAt: null, attendanceMarkedBy: execId })
+    .where(
+      and(
+        eq(schema.rsvps.eventId, eventId),
+        eq(schema.rsvps.status, "confirmed"),
+        eq(schema.rsvps.attendance, "unmarked"),
+      ),
+    )
+    .returning({ id: schema.rsvps.id });
+  return updated.length;
+}
+
+/** Reset a whole session back to unmarked — the undo for marking the wrong event. */
+export async function clearAttendanceTx(tx: Tx, eventId: string): Promise<void> {
+  await tx
+    .update(schema.rsvps)
+    .set({ attendance: "unmarked", checkedInAt: null, attendanceMarkedBy: null })
+    .where(eq(schema.rsvps.eventId, eventId));
+}
+
+/**
+ * Strike counts for a set of members, in one query.
+ *
+ * Derived from attendance every time it's read — see `src/lib/strikes.ts` for
+ * why there is no stored counter. Practices only, matching `tracksAttendance`. Exec-only data: no member-facing page calls
+ * this.
+ */
+export async function strikeCounts(memberIds: string[]): Promise<Map<string, number>> {
+  if (memberIds.length === 0) return new Map();
+
+  const rows = await db()
+    .select({ memberId: schema.rsvps.memberId, strikes: sql<number>`count(*)::int` })
+    .from(schema.rsvps)
+    .innerJoin(schema.events, eq(schema.rsvps.eventId, schema.events.id))
+    .where(
+      and(
+        inArray(schema.rsvps.memberId, memberIds),
+        eq(schema.events.type, "practice"),
+        eq(schema.rsvps.status, "confirmed"),
+        eq(schema.rsvps.attendance, "no_show"),
+      ),
+    )
+    .groupBy(schema.rsvps.memberId);
+
+  return new Map(rows.map((r) => [r.memberId, r.strikes]));
+}
+
+/** Every no-show on a member's record, newest first — the evidence behind their strikes. */
+export async function strikeHistory(memberId: string) {
+  return db()
+    .select({
+      rsvpId: schema.rsvps.id,
+      eventId: schema.events.id,
+      title: schema.events.title,
+      startsAt: schema.events.startsAt,
+    })
+    .from(schema.rsvps)
+    .innerJoin(schema.events, eq(schema.rsvps.eventId, schema.events.id))
+    .where(
+      and(
+        eq(schema.rsvps.memberId, memberId),
+        eq(schema.events.type, "practice"),
+        eq(schema.rsvps.status, "confirmed"),
+        eq(schema.rsvps.attendance, "no_show"),
+      ),
+    )
+    .orderBy(desc(schema.events.startsAt));
 }

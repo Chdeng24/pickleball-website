@@ -6,6 +6,10 @@ import { db, schema } from "@/db";
 import { PendingList } from "./pending-list";
 import { RosterImport } from "./roster-import";
 import { skillLabel } from "@/lib/derive-level";
+import { strikeCounts } from "@/lib/rsvp";
+import { strikeState } from "@/lib/strikes";
+import { attendanceCopy } from "@/lib/content";
+import { StrikeBadge } from "@/components/site/strike-badge";
 
 export const metadata: Metadata = { title: "Members" };
 
@@ -32,6 +36,10 @@ export default async function MembersPage() {
     .from(schema.rosterEmails);
 
   const compCount = roster.filter((m) => m.onCompetitiveTeam).length;
+
+  // Exec-only. Never queried by any member-facing page.
+  const strikes = await strikeCounts(roster.map((m) => m.id));
+  const flagged = roster.filter((m) => strikeState(strikes.get(m.id) ?? 0) === "flagged");
 
   return (
     <div className="space-y-12">
@@ -60,6 +68,25 @@ export default async function MembersPage() {
         </div>
       </section>
 
+      {flagged.length > 0 && (
+        <section className="border-2 border-red-700 bg-red-50 p-5">
+          <h2 className="font-display text-sm font-bold uppercase tracking-wide text-red-800">
+            At the strike limit ({flagged.length})
+          </h2>
+          <p className="mt-1 text-xs text-red-900/70">{attendanceCopy.policy}</p>
+          <ul className="mt-4 space-y-2">
+            {flagged.map((m) => (
+              <li key={m.id} className="flex flex-wrap items-center gap-3 text-sm">
+                <Link href={`/exec/members/${m.id}`} className="font-semibold text-navy-900 hover:underline">
+                  {m.name ?? m.email}
+                </Link>
+                <StrikeBadge strikes={strikes.get(m.id) ?? 0} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section>
         <h2 className="font-display text-sm font-bold uppercase tracking-wide text-ink/50">
           Approved members ({roster.length}) · {compCount} Competitive Team
@@ -71,11 +98,19 @@ export default async function MembersPage() {
                 <th className="p-4">Name</th>
                 <th className="p-4">Role</th>
                 <th className="p-4">Level</th>
+                <th className="p-4">{attendanceCopy.strikes}</th>
               </tr>
             </thead>
             <tbody>
               {roster.map((m) => (
-                <tr key={m.id} className="border-b border-navy-900/5 last:border-0">
+                <tr
+                  key={m.id}
+                  className={
+                    strikeState(strikes.get(m.id) ?? 0) === "flagged"
+                      ? "border-b border-navy-900/5 bg-red-50 last:border-0"
+                      : "border-b border-navy-900/5 last:border-0"
+                  }
+                >
                   <td className="p-4">
                     <Link href={`/exec/members/${m.id}`} className="font-semibold text-navy-900 hover:underline">
                       {m.name ?? m.email}
@@ -89,6 +124,9 @@ export default async function MembersPage() {
                     ) : (
                       skillLabel(m)
                     )}
+                  </td>
+                  <td className="p-4">
+                    <StrikeBadge strikes={strikes.get(m.id) ?? 0} showClear />
                   </td>
                 </tr>
               ))}

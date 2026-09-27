@@ -166,6 +166,34 @@ export const rsvpListCopy = {
   signedOutNote: "Sign in to see full names.",
 };
 
+/**
+ * Check-in and the strike policy. Exec-facing only — none of this is ever
+ * rendered on a member-facing page.
+ */
+export const attendanceCopy = {
+  present: "Present",
+  noShow: "No-show",
+  unmarked: "Not marked",
+  markRemaining: "Mark everyone else as no-show",
+  markRemainingHint: "Check people in as they arrive, then mark whoever is left.",
+  clearAll: "Clear this session's attendance",
+  notStartedYet: "Attendance opens once the session starts.",
+  strikes: "Strikes",
+  flagged: "At the limit — remove from club",
+  warning: "1 more no-show = removal",
+  policy:
+    "A no-show on a confirmed spot is a strike. Two strikes and the member is removed from the club. Cancelling in advance is never a strike — it gives the spot back to someone on the waitlist.",
+  noStrikes: "No strikes.",
+  errors: {
+    badInput: "That didn't look right — reload and try again.",
+    notFound: "That RSVP no longer exists.",
+    notStarted: "This session hasn't started yet.",
+    notPractice: "Attendance is only taken at practices.",
+    notConfirmed: "Only members who held a confirmed spot can be marked.",
+    unknown: "Couldn't save that. Try again.",
+  },
+} as const;
+
 /** "How it works" steps on the Tournaments tab. `icon` maps to a lucide icon in the page. */
 export const leagueSteps = [
   {

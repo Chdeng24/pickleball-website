@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   decideStatus,
   checkRsvpWindow,
+  checkCancelWindow,
   resolveInsertOrReactivate,
   repackPositions,
   selectPromotion,
@@ -106,4 +107,16 @@ test("re-activating a cancelled RSVP does not create a duplicate", () => {
 test("rejects a second RSVP while already confirmed or waitlisted", () => {
   assert.equal(resolveInsertOrReactivate("confirmed"), "reject");
   assert.equal(resolveInsertOrReactivate("waitlist"), "reject");
+});
+
+test("cancelling is allowed any time before the session starts", () => {
+  assert.deepEqual(checkCancelWindow({ startsAt: new Date(now.getTime() + 1) }, now), { ok: true });
+});
+
+test("cancelling is refused once the session has started — it can't erase a no-show", () => {
+  assert.deepEqual(checkCancelWindow({ startsAt: now }, now), { ok: false, reason: "past" });
+  assert.deepEqual(checkCancelWindow({ startsAt: new Date(now.getTime() - 2 * HOUR) }, now), {
+    ok: false,
+    reason: "past",
+  });
 });

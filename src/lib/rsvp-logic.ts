@@ -52,6 +52,22 @@ export function checkRsvpWindow(
   return { ok: true };
 }
 
+/**
+ * Cancelling is only allowed before the session starts.
+ *
+ * Once it has started, the spot can no longer go to anyone on the waitlist, so
+ * a late cancel is effectively a no-show. It also closes a loophole: a member
+ * marked as a no-show could otherwise cancel afterwards, flip their RSVP to
+ * `cancelled`, and erase the strike (see `src/lib/strikes.ts`).
+ */
+export function checkCancelWindow(
+  event: { startsAt: Date },
+  now: Date,
+): { ok: true } | { ok: false; reason: RsvpErrorReason } {
+  if (event.startsAt <= now) return { ok: false, reason: "past" };
+  return { ok: true };
+}
+
 /** What to do about a prior RSVP row for this member on this event, if any. */
 export function resolveInsertOrReactivate(
   existingStatus: "confirmed" | "waitlist" | "cancelled" | null,

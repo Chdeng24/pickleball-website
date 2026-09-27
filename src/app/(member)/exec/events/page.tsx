@@ -4,6 +4,7 @@ import { desc, eq, and } from "drizzle-orm";
 import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
 import { formatEventWhen } from "@/lib/dates";
+import { canRecordAttendance } from "@/lib/strikes";
 import { EventForm } from "./event-form";
 import { EventRowActions } from "./event-row-actions";
 
@@ -13,6 +14,7 @@ export default async function ExecEventsPage() {
   await requireExec();
 
   const events = await db().select().from(schema.events).orderBy(desc(schema.events.startsAt));
+  const now = new Date();
 
   const counts = await Promise.all(
     events.map((e) =>
@@ -77,6 +79,14 @@ export default async function ExecEventsPage() {
                     {counts[i]}
                     {event.capacity !== null ? ` / ${event.capacity}` : ""}
                   </Link>
+                  {canRecordAttendance(event, now) && (
+                    <Link
+                      href={`/exec/events/${event.id}/rsvps`}
+                      className="block text-xs font-bold uppercase tracking-wide text-navy-800 hover:underline"
+                    >
+                      Check in →
+                    </Link>
+                  )}
                 </td>
                 <td className="p-4">
                   <span

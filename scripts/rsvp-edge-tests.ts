@@ -26,7 +26,14 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import { and, asc, eq, like, ne } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import type { Tx } from "../src/db/pool";
-import { RsvpError, rsvpTx, cancelRsvpTx } from "../src/lib/rsvp";
+import {
+  RsvpError,
+  rsvpTx,
+  cancelRsvpTx,
+  setAttendanceTx,
+  markRemainingNoShowTx,
+  clearAttendanceTx,
+} from "../src/lib/rsvp";
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is not set — run via `npm run test:rsvp`.");
@@ -323,6 +330,107 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       assert.equal((await rsvpTx(tx, e2.id, me.id)).status, "confirmed");
     },
   ],
+  [
+    "a no-show can't cancel after the session to erase the strike",
+    async (tx) => {
+      const event = await makeEvent(tx, {
+        startsAt: new Date(Date.now() - 4 * HOUR),
+        endsAt: new Date(Date.now() - 2 * HOUR),
+      });
+      const me = await makeUser(tx);
+      // rsvpTx refuses a past event, so seed the row as if it predates the start.
+      await tx.insert(schema.rsvps).values({
+        eventId: event.id,
+        memberId: me.id,
+        status: "confirmed",
+        position: 1,
+        attendance: "no_show",
+      });
+
+      const e = await friendly(sp(tx, (t) => cancelRsvpTx(t, event.id, me.id)));
+      assert.equal(e.reason, "past");
+
+      const [row] = await live(tx, event.id);
+      assert.equal(row?.status, "confirmed", "the RSVP must still be confirmed");
+      assert.equal(row?.attendance, "no_show", "and the no-show must still stand");
+    },
+  ],
+  [
+    "bulk no-show only reaches confirmed + unmarked rows — never a check-in, waitlister, or canceller",
+    async (tx) => {
+      const event = await makeEvent(tx, { capacity: 2 });
+      const [here, gone, waiting, cancelled] = [
+        await makeUser(tx),
+        await makeUser(tx),
+        await makeUser(tx),
+        await makeUser(tx),
+      ];
+      const exec = await makeUser(tx);
+      await rsvpTx(tx, event.id, here.id);
+      await rsvpTx(tx, event.id, gone.id);
+      await rsvpTx(tx, event.id, waiting.id);
+      await rsvpTx(tx, event.id, cancelled.id);
+      await cancelRsvpTx(tx, event.id, cancelled.id);
+
+      const byMember = async () =>
+        new Map(
+          (await tx.select().from(schema.rsvps).where(eq(schema.rsvps.eventId, event.id))).map((r) => [
+            r.memberId,
+            r,
+          ]),
+        );
+
+      const hereRow = (await byMember()).get(here.id)!;
+      assert.equal(await setAttendanceTx(tx, hereRow.id, "present", exec.id), true);
+      assert.equal(await markRemainingNoShowTx(tx, event.id, exec.id), 1, "only `gone` is left to mark");
+      assert.equal(await markRemainingNoShowTx(tx, event.id, exec.id), 0, "a second tap marks nobody");
+
+      const rows = await byMember();
+      assert.equal(rows.get(here.id)!.attendance, "present");
+      assert.ok(rows.get(here.id)!.checkedInAt, "present rows carry a check-in time");
+      assert.equal(rows.get(gone.id)!.attendance, "no_show");
+      assert.equal(rows.get(gone.id)!.attendanceMarkedBy, exec.id, "audit trail records the exec");
+      assert.equal(rows.get(waiting.id)!.attendance, "unmarked", "waitlister untouched");
+      assert.equal(rows.get(cancelled.id)!.attendance, "unmarked", "canceller untouched");
+    },
+  ],
+  [
+    "a waitlisted or cancelled RSVP can't be marked one at a time either",
+    async (tx) => {
+      const event = await makeEvent(tx, { capacity: 1 });
+      const [a, b, c] = [await makeUser(tx), await makeUser(tx), await makeUser(tx)];
+      await rsvpTx(tx, event.id, a.id);
+      await rsvpTx(tx, event.id, b.id); // waitlisted
+      await rsvpTx(tx, event.id, c.id);
+      await cancelRsvpTx(tx, event.id, c.id);
+
+      const rows = await tx.select().from(schema.rsvps).where(eq(schema.rsvps.eventId, event.id));
+      for (const r of rows.filter((r) => r.status !== "confirmed")) {
+        assert.equal(await setAttendanceTx(tx, r.id, "no_show", a.id), false, `${r.status} must be refused`);
+      }
+      const after = await tx.select().from(schema.rsvps).where(eq(schema.rsvps.eventId, event.id));
+      assert.ok(after.every((r) => r.status === "confirmed" || r.attendance === "unmarked"));
+    },
+  ],
+  [
+    "clearing a session wipes its marks and audit trail, and no other session's",
+    async (tx) => {
+      const [e1, e2] = [await makeEvent(tx), await makeEvent(tx)];
+      const me = await makeUser(tx);
+      await rsvpTx(tx, e1.id, me.id);
+      await rsvpTx(tx, e2.id, me.id);
+      await markRemainingNoShowTx(tx, e1.id, me.id);
+      await markRemainingNoShowTx(tx, e2.id, me.id);
+
+      await clearAttendanceTx(tx, e1.id);
+
+      const [r1] = await live(tx, e1.id);
+      const [r2] = await live(tx, e2.id);
+      assert.equal(r1.attendance, "unmarked");
+      assert.equal(r1.attendanceMarkedBy, null);
+      assert.equal(r2.attendance, "no_show", "the other session's strike must stand");
+    },
+  ],
 ];
 
 /**
@@ -420,6 +528,113 @@ async function stressRace(): Promise<boolean> {
   }
 }
 
+/**
+ * Check-in race: courtside, two execs are marking arrivals on their phones
+ * while one of them taps "mark everyone else as no-show" (twice, as people
+ * do). Whatever order the commits land in, everyone who was checked in must
+ * end up present and everyone else a no-show. A check-in that lands before
+ * the bulk is skipped by it; one that lands after overwrites it.
+ */
+const ARRIVED = 14;
+
+async function stressCheckIn(): Promise<boolean> {
+  const [event] = await conn
+    .insert(schema.events)
+    .values({
+      type: "practice",
+      title: `${tag} STRESS (auto-deleted)`,
+      level: "advanced",
+      location: "Stress Test",
+      startsAt: new Date(Date.now() - 2 * HOUR),
+      endsAt: new Date(Date.now() - HOUR),
+      capacity: CAPACITY,
+      published: false,
+    })
+    .returning();
+
+  try {
+    const users = await conn
+      .insert(schema.users)
+      .values(
+        Array.from({ length: CAPACITY + 4 }, (_, i) => ({
+          name: `Check-in Tester ${i + 1}`,
+          email: `${tag}-checkin-${i + 1}@${STRESS_DOMAIN}`,
+          status: "approved" as const,
+        })),
+      )
+      .returning();
+    const [exec] = users;
+
+    // Seed directly: rsvpTx refuses a session that has already started.
+    const rows = await conn
+      .insert(schema.rsvps)
+      .values(
+        users.map((u, i) => ({
+          eventId: event.id,
+          memberId: u.id,
+          status: (i < CAPACITY ? "confirmed" : i < CAPACITY + 2 ? "waitlist" : "cancelled") as
+            | "confirmed"
+            | "waitlist"
+            | "cancelled",
+          position: i < CAPACITY ? i + 1 : i < CAPACITY + 2 ? i - CAPACITY + 1 : 1,
+        })),
+      )
+      .returning();
+    const confirmedRows = rows.filter((r) => r.status === "confirmed");
+    const arrived = new Set(confirmedRows.slice(0, ARRIVED).map((r) => r.id));
+
+    const onOwnSession = <T>(fn: (tx: Tx) => Promise<T>) =>
+      (async () => {
+        const p = new Pool({ connectionString: process.env.DATABASE_URL });
+        try {
+          return await drizzle(p, { schema }).transaction((tx) => fn(tx as Tx));
+        } finally {
+          await p.end().catch(() => {});
+        }
+      })();
+
+    const ops: Promise<unknown>[] = [];
+    for (const id of arrived) {
+      ops.push(onOwnSession((tx) => setAttendanceTx(tx, id, "present", exec.id)));
+      // Double-taps on some arrivals.
+      if (ops.length % 3 === 0) ops.push(onOwnSession((tx) => setAttendanceTx(tx, id, "present", exec.id)));
+    }
+    // Two bulk taps, interleaved with the check-ins.
+    ops.splice(4, 0, onOwnSession((tx) => markRemainingNoShowTx(tx, event.id, exec.id)));
+    ops.push(onOwnSession((tx) => markRemainingNoShowTx(tx, event.id, exec.id)));
+
+    const settled = await Promise.allSettled(ops);
+
+    const after = await conn.select().from(schema.rsvps).where(eq(schema.rsvps.eventId, event.id));
+    const problems: string[] = [];
+    const failures = settled.filter((r) => r.status === "rejected");
+    if (failures.length) {
+      problems.push(
+        `${failures.length}/${ops.length} writes threw: ${(failures[0] as PromiseRejectedResult).reason?.message ?? "?"}`,
+      );
+    }
+    for (const r of after) {
+      const expected = r.status !== "confirmed" ? "unmarked" : arrived.has(r.id) ? "present" : "no_show";
+      if (r.attendance !== expected) problems.push(`${r.status} row expected ${expected}, got ${r.attendance}`);
+      if ((r.attendance === "present") !== (r.checkedInAt !== null)) {
+        problems.push(`checkedInAt out of sync with ${r.attendance}`);
+      }
+    }
+    const strikes = after.filter((r) => r.status === "confirmed" && r.attendance === "no_show").length;
+    if (strikes !== CAPACITY - ARRIVED) problems.push(`expected ${CAPACITY - ARRIVED} strikes, got ${strikes}`);
+
+    console.log(
+      problems.length
+        ? `  ✗ check-in race\n      ${problems.slice(0, 5).join("\n      ")}`
+        : `  ✓ ${ops.length} concurrent check-ins + bulk no-shows → ${ARRIVED} present, ${strikes} no-shows, waitlist/cancelled untouched`,
+    );
+    return problems.length === 0;
+  } finally {
+    await conn.delete(schema.events).where(eq(schema.events.id, event.id));
+    await conn.delete(schema.users).where(like(schema.users.email, `%@${STRESS_DOMAIN}`));
+  }
+}
+
 async function main() {
   // Sweep up after any earlier run that was killed before its cleanup.
   await conn.delete(schema.users).where(like(schema.users.email, `%@${STRESS_DOMAIN}`));
@@ -446,6 +661,7 @@ async function main() {
 
   console.log("\n  stress test (commits to a throwaway event, then deletes it):");
   if (!(await stressRace())) failed++;
+  if (!(await stressCheckIn())) failed++;
 
   // Belt and braces: nothing this script created may survive it.
   const leftovers = await conn
@@ -454,7 +670,7 @@ async function main() {
     .where(like(schema.users.email, `%@${STRESS_DOMAIN}`));
   await pool.end();
 
-  const total = scenarios.length + 1;
+  const total = scenarios.length + 2;
   console.log(
     `\n${total - failed}/${total} passed${leftovers.length ? ` — WARNING: ${leftovers.length} test rows leaked` : ""}`,
   );
