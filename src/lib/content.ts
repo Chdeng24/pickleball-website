@@ -199,24 +199,38 @@ export const leagueSteps = [
   {
     icon: "users",
     title: "Sign up",
-    body: "Register solo or with a partner — free. One league per person: Beginner, Advanced, or Comp (Competitive Team only). No partner? Exec pairs solo players before the draw.",
-  },
-  {
-    icon: "trophy",
-    title: "Get drawn into a pool",
-    body: "When registration closes, exec draws pools of up to 8 teams in your division and emails everyone their opponents.",
+    body: "Register solo or with a partner — free. One league per person: Beginner or Advanced. No partner? Free agents are paired at random when registration closes.",
   },
   {
     icon: "calendar",
-    title: "Play your pool",
-    body: `Play every other team in your pool once — best of 3 at ${venue.name}, on whatever days work for both teams.`,
+    title: "One match a week",
+    body: `Every week you get a new opponent. Message them on Slack, agree on a time, post it on the site by Wednesday, book a court at ${venue.name}, and play best of 3.`,
   },
   {
     icon: "clipboard",
-    title: "Top teams move up",
-    body: "Any of the four players reports the score. Standings update live, and the top teams in each pool move up.",
+    title: "Report the score",
+    body: "Any of the four players reports it by Saturday night. Sick or out of town? Mark it and the match becomes a makeup the next week. Standings update live.",
+  },
+  {
+    icon: "trophy",
+    title: "Playoffs",
+    body: "After the round robin, the top teams play single elimination, one round a week, ending in the final on the last weekend of classes.",
   },
 ] as const;
+
+/** Pickleball League week-to-week rules — shown on the Tournaments tab and in reminder emails. */
+export const leagueInfo = {
+  /** Courts open for reservation 72 hours ahead, on a rolling basis. */
+  courtBookingUrl: "https://shop.rs.berkeley.edu/booking/164d5765-6775-46d4-ad51-2c9f51027a2d",
+  courtBookingNote: "Courts open for reservation 72 hours ahead, on a rolling basis.",
+  weekRule:
+    "Each week: post when you're playing by Wednesday 11:59 PM, and report the score by Saturday 11:59 PM. Only one of the four players needs to do either.",
+  outOfTownRule:
+    "Sick or out of town? Tap \"Can't make it this week\" before Saturday's deadline and the match becomes a makeup due the next Saturday. If either team can't make the makeup, the team that missed the first one forfeits. Please keep these to a minimum.",
+  noShowRule:
+    "A match nobody reports by Saturday counts as a double forfeit — neither team gets the win. If one team just didn't respond, tell exec and they'll award the win. The no-show strike policy applies, including not letting your opponents know you can't play that week.",
+  scoreRule: "Best of 3, games to 11, win by 2. Any player reports; the other team can confirm or dispute it.",
+};
 
 export const officers = [
   { name: "Sienna Lam", role: "President", year: "Senior", photo: null },

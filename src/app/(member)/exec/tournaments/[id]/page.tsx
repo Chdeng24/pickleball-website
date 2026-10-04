@@ -1,24 +1,31 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { requireExec } from "@/lib/session";
 import { isAdmin } from "@/lib/access";
 import { db, schema } from "@/db";
-import { computeStandings } from "@/lib/standings";
-import { confirmedPoolMatches } from "@/lib/tournament";
 import { spotsTakenByLeague, teamMembers } from "@/lib/league";
+import { loadLeagueView, type ViewMatch } from "@/lib/league-view";
 import { isRegistrationOpen, teamReadiness, type Readiness } from "@/lib/league-rules";
 import { formatDeadline, utcToLaInputValue } from "@/lib/dates";
+import { OVERDUE_GRACE_MS, playoffRounds, recommendedPlayoffTeams, scheduleBy, weekOf, weekRange } from "@/lib/schedule";
 import { cn } from "@/lib/utils";
+import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import { LeagueForm } from "../league-form";
 import {
+  AddTeamForm,
   DiscardDraftButton,
   EndLeagueButton,
+  FillSlotForm,
   GenerateDraftButton,
-  MoveTeamPoolSelect,
+  MakePlayoffsButton,
+  MatchOverride,
   PairTeamForm,
   PublishDrawButton,
+  RandomPairButton,
   ResolveDisputeForm,
+  ScrapPlayoffsButton,
+  SwapSelect,
   WithdrawTeamButton,
 } from "./team-actions";
 
@@ -32,6 +39,14 @@ const READINESS: Record<Readiness, { label: string; className: string }> = {
 
 const INVITE_LABEL = { accepted: "", pending: " (invited)", declined: " (declined)" } as const;
 
+function Heading({ children, tone = "muted" }: { children: React.ReactNode; tone?: "muted" | "alert" }) {
+  return (
+    <h2 className={cn("font-display text-sm font-bold uppercase tracking-wide", tone === "alert" ? "text-red-700" : "text-ink/50")}>
+      {children}
+    </h2>
+  );
+}
+
 export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/tournaments/[id]">) {
   const viewer = await requireExec();
   const { id } = await params;
@@ -40,40 +55,30 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
   const [league] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, id));
   if (!league) notFound();
 
-  const allTeams = await db().select().from(schema.tmTeams).where(eq(schema.tmTeams.tournamentId, id));
-  const members = await teamMembers(allTeams.map((t) => t.id));
-  const matches = await db()
-    .select()
-    .from(schema.matches)
-    .where(and(eq(schema.matches.tournamentId, id), eq(schema.matches.stage, "pool")));
-  const disputed = await db()
-    .select({ report: schema.matchReports, match: schema.matches })
-    .from(schema.matchReports)
-    .innerJoin(schema.matches, eq(schema.matchReports.matchId, schema.matches.id))
-    .where(and(eq(schema.matches.tournamentId, id), eq(schema.matches.status, "disputed")));
-  const confirmed = await confirmedPoolMatches(id);
+  const view = await loadLeagueView(league);
+  const members = await teamMembers(view.teams.map((t) => t.id));
   const taken = (await spotsTakenByLeague([id])).get(id) ?? 0;
 
   const now = new Date();
   const isRegistration = league.status === "registration";
   const isDraft = league.status === "pools" && !league.poolsAnnouncedAt;
   const isLive = Boolean(league.poolsAnnouncedAt) && league.status !== "complete";
+  const isKnockout = league.status === "knockout";
   const isEnded = league.status === "complete";
+  const season = view.season;
 
-  const activeTeams = allTeams
-    .filter((t) => t.status !== "withdrawn")
+  const activeTeams = view.teams
+    .filter((t) => t.status !== "withdrawn" && !t.isPlaceholder)
     .map((t) => {
       const roster = members.filter((m) => m.teamId === t.id);
       return { ...t, roster, readiness: teamReadiness(roster) };
     })
     .sort((a, b) => a.name.localeCompare(b.name));
-  const withdrawn = allTeams.filter((t) => t.status === "withdrawn");
+  const withdrawn = view.teams.filter((t) => t.status === "withdrawn" && !t.isPlaceholder);
+  const openSlots = view.teams.filter((t) => t.isPlaceholder && t.status !== "withdrawn");
 
-  const teamName = (teamId: string | null) => allTeams.find((t) => t.id === teamId)?.name ?? "—";
-  const who = (roster: typeof members) =>
-    roster.map((m) => `${m.name ?? m.email}${INVITE_LABEL[m.inviteStatus]}`).join(" & ");
+  const who = (roster: typeof members) => roster.map((m) => `${m.name ?? m.email}${INVITE_LABEL[m.inviteStatus]}`).join(" & ");
 
-  // Solo registrations with no invite out can be paired by exec.
   const soloTeams = activeTeams.filter(
     (t) => t.roster.filter((m) => m.inviteStatus === "accepted").length === 1 && !t.roster.some((m) => m.inviteStatus === "pending"),
   );
@@ -85,20 +90,75 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
         return { id: t.id, label: p ? `${p.name ?? p.email}` : t.name };
       });
 
-  const pools = [...new Set(activeTeams.map((t) => t.pool).filter((p): p is string => Boolean(p)))].sort();
-  const leftOut = activeTeams.filter((t) => !t.pool);
+  const scheduled = activeTeams.filter((t) => t.pool);
+  const unscheduled = activeTeams.filter((t) => !t.pool);
+  const unscheduledReady = unscheduled.filter((t) => t.readiness === "ready");
   const readyCount = activeTeams.filter((t) => t.readiness === "ready").length;
   const stillOpenByDate = league.registrationClosesAt && league.registrationClosesAt > now;
 
+  const currentWeek = season ? weekOf(season.seasonStartsOn, now) : 0;
+  const disputed = view.matches.filter((m) => m.status === "disputed");
+  const needsAttention = view.matches.filter(
+    (m) =>
+      !view.isBye(m) &&
+      m.teamAId &&
+      m.teamBId &&
+      m.status === "pending" &&
+      m.dueBy &&
+      now.getTime() > m.dueBy.getTime() + (m.stage === "knockout" ? 0 : OVERDUE_GRACE_MS),
+  );
+
+  // Past Wednesday's cut-off with no time posted — exec's call whether that's a strike.
+  const noTime = view.matches.filter(
+    (m) => !view.isBye(m) && m.teamAId && m.teamBId && m.status === "pending" && !m.scheduledAt && m.dueBy && now > scheduleBy(m.dueBy) && now <= m.dueBy,
+  );
+
+  let playoffPlan: string | null = null;
+  if (season) {
+    try {
+      playoffPlan = playoffRounds(season)
+        .map((r) => `${r.name} by ${formatDeadline(r.dueBy)}`)
+        .join(" → ");
+    } catch (e) {
+      playoffPlan = e instanceof Error ? `⚠ ${e.message}` : null;
+    }
+  }
+  const suggested = season ? recommendedPlayoffTeams(scheduled.length || readyCount, season) : null;
+
   const badge = isEnded
     ? "Ended"
-    : isLive
-      ? "Live"
-      : isDraft
-        ? "Draft draw — members can't see it yet"
-        : isRegistrationOpen(league, now)
-          ? "Registration open"
-          : "Registration closed — ready to draw";
+    : isKnockout
+      ? "Playoffs"
+      : isLive
+        ? currentWeek >= 1
+          ? `Live — week ${currentWeek}`
+          : "Live — starts soon"
+        : isDraft
+          ? "Draft schedule — members can't see it yet"
+          : isRegistrationOpen(league, now)
+            ? "Registration open"
+            : "Registration closed — ready to draw";
+
+  const override = (m: ViewMatch) =>
+    isLive ? (
+      <MatchOverride
+        matchId={m.id}
+        teamAName={view.name(m.teamAId)}
+        teamBName={view.name(m.teamBId)}
+        knockout={m.stage === "knockout"}
+        pending={m.status === "pending"}
+      />
+    ) : null;
+
+  const swapOptions = (teamId: string) => [
+    ...scheduled.filter((t) => t.id !== teamId).map((t) => ({ id: t.id, label: t.name })),
+    ...openSlots.map((t) => ({ id: t.id, label: `${t.name} (empty)` })),
+    ...unscheduledReady.map((t) => ({ id: t.id, label: `${t.name} (not scheduled — replaces)` })),
+  ];
+  const bracketTeams = view.knockout.length
+    ? [...new Set(view.knockout.filter((m) => m.round === 1).flatMap((m) => [m.teamAId, m.teamBId]))].filter((x): x is string => Boolean(x))
+    : [];
+  const bracketStarted = view.knockout.some((m) => m.status !== "pending");
 
   return (
     <div className="space-y-10">
@@ -114,20 +174,28 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
             {taken}
             {league.maxPlayers ? ` / ${league.maxPlayers}` : ""} players
           </span>
-          {league.registrationClosesAt && (
+          {league.registrationClosesAt && isRegistration && (
+            <span className="bg-navy-900/5 px-2.5 py-1 font-bold uppercase text-navy-900">Closes {formatDeadline(league.registrationClosesAt)}</span>
+          )}
+          {season && (
             <span className="bg-navy-900/5 px-2.5 py-1 font-bold uppercase text-navy-900">
-              Closes {formatDeadline(league.registrationClosesAt)}
+              Week 1: {weekRange(season.seasonStartsOn, 1)} · {season.roundRobinWeeks} weeks + {season.catchupWeeks} catch-up · Top{" "}
+              {season.playoffTeams} playoffs
             </span>
           )}
-          <span className="bg-navy-900/5 px-2.5 py-1 font-bold uppercase text-navy-900">
-            Pools of {league.poolSize} · top {league.advancePerPool} move up
-          </span>
         </div>
+        {playoffPlan && <p className="mt-2 text-xs text-ink/55">Playoffs: {playoffPlan}</p>}
+        {suggested && suggested !== league.playoffTeams && !isKnockout && !isEnded && (
+          <p className="mt-1 text-xs text-ink/55">
+            Suggested playoff size for {scheduled.length || readyCount} teams: top {suggested} (about a third of the league, fits before the final).
+            Change it in Settings.
+          </p>
+        )}
       </div>
 
       <details className="border-2 border-navy-900/10 bg-white open:pb-6">
         <summary className="cursor-pointer p-5 font-display text-sm font-bold uppercase tracking-wide text-navy-900">
-          Settings — name, cap, deadline, location, pools
+          Settings — name, cap, deadline, season dates, playoffs
         </summary>
         <div className="px-5">
           <LeagueForm
@@ -138,36 +206,45 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
               eligibility: league.eligibility,
               location: league.location,
               maxPlayers: league.maxPlayers,
-              poolSize: league.poolSize,
-              advancePerPool: league.advancePerPool,
               autoconfirmHours: league.autoconfirmHours,
               registrationClosesAtInput: league.registrationClosesAt ? utcToLaInputValue(league.registrationClosesAt) : "",
+              seasonStartsOn: league.seasonStartsOn,
+              roundRobinWeeks: league.roundRobinWeeks,
+              catchupWeeks: league.catchupWeeks,
+              playoffTeams: league.playoffTeams,
+              finalOn: league.finalOn,
             }}
           />
-          {league.status === "pools" && (
-            <p className="mt-4 text-xs text-ink/50">
-              Changing the deadline won&apos;t reopen registration while a draw exists — discard the draft first.
-            </p>
-          )}
         </div>
       </details>
 
+      {/* ── Registration: pair free agents, then draw ── */}
       {isRegistration && (
         <section className="space-y-5">
           <div>
-            <h2 className="font-display text-sm font-bold uppercase tracking-wide text-ink/50">
+            <Heading>
               Teams ({activeTeams.length}) · {readyCount} ready for the draw
-            </h2>
+            </Heading>
             <p className="mt-1 text-xs text-ink/45">
-              Only teams with two confirmed players get drawn. Pair up anyone flagged &quot;Needs a partner&quot;
-              before you draw, or they sit out.
+              Step 1: after registration closes, randomly pair the free agents. Step 2: generate the draft schedule. Step 3: check it, swap
+              anything you want, publish.
             </p>
           </div>
 
+          {soloTeams.length > 1 && (
+            <div>
+              {stillOpenByDate ? (
+                <p className="text-xs text-ink/50">
+                  {soloTeams.length} free agents. Random pairing unlocks when registration closes ({formatDeadline(league.registrationClosesAt!)}).
+                </p>
+              ) : (
+                <RandomPairButton tournamentId={league.id} count={soloTeams.length} />
+              )}
+            </div>
+          )}
+
           {activeTeams.length === 0 ? (
-            <p className="border-2 border-dashed border-navy-900/15 bg-white p-8 text-center text-sm text-ink/50">
-              Nobody has registered yet.
-            </p>
+            <p className="border-2 border-dashed border-navy-900/15 bg-white p-8 text-center text-sm text-ink/50">Nobody has registered yet.</p>
           ) : (
             <ul className="divide-y divide-navy-900/5 border-2 border-navy-900/10 bg-white">
               {activeTeams.map((t) => (
@@ -183,107 +260,204 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                   </div>
                   <div className="flex flex-wrap items-center gap-3">
                     {soloTeams.some((s) => s.id === t.id) && <PairTeamForm teamId={t.id} options={pairOptions(t.id)} />}
-                    <WithdrawTeamButton teamId={t.id} live={false} />
+                    <WithdrawTeamButton teamId={t.id} scheduled={false} />
                   </div>
                 </li>
               ))}
             </ul>
           )}
 
-          <GenerateDraftButton
-            tournamentId={league.id}
-            regenerate={false}
-            closesText={stillOpenByDate && league.registrationClosesAt ? formatDeadline(league.registrationClosesAt) : null}
-          />
+          {season ? (
+            <GenerateDraftButton
+              tournamentId={league.id}
+              regenerate={false}
+              teamCount={readyCount}
+              closesText={stillOpenByDate && league.registrationClosesAt ? formatDeadline(league.registrationClosesAt) : null}
+            />
+          ) : (
+            <p className="text-sm text-red-700">Set the season dates in Settings before drawing.</p>
+          )}
         </section>
       )}
 
-      {(isDraft || isLive || isEnded) && (
-        <section>
-          <h2 className="font-display text-sm font-bold uppercase tracking-wide text-ink/50">
-            {isDraft ? "Draft pools — only exec can see these" : "Pools"}
-          </h2>
+      {/* ── Needs attention (live) ── */}
+      {isLive && noTime.length > 0 && (
+        <section className="space-y-2">
+          <Heading tone="alert">Missed Wednesday&apos;s cut-off — no match time posted ({noTime.length})</Heading>
+          <p className="text-xs text-ink/45">Both teams were emailed Thursday morning. These still have until Saturday 11:59 PM to play and report.</p>
+          <ul className="divide-y divide-red-100 border-2 border-red-200 bg-white">
+            {noTime.map((m) => (
+              <li key={m.id} className="p-3 text-sm text-navy-900">
+                <span className="text-xs font-bold uppercase text-ink/45">{view.label(m)}</span> · {view.name(m.teamAId)} vs {view.name(m.teamBId)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
-          {pools.length === 0 ? (
-            <p className="mt-3 text-sm text-ink/40">No pools.</p>
-          ) : (
-            <div className="mt-4 space-y-8">
-              {pools.map((pool) => {
-                const poolTeams = activeTeams.filter((t) => t.pool === pool);
-                const poolMatches = matches.filter((m) => m.pool === pool);
-                const played = poolMatches.filter((m) => m.status === "confirmed").length;
-                const standings = computeStandings(
-                  poolTeams.map((t) => t.id),
-                  confirmed.filter((m) => m.pool === pool),
-                );
-                const ordered = isDraft ? poolTeams : standings.map((s) => poolTeams.find((t) => t.id === s.teamId)!).filter(Boolean);
-
+      {isLive && (needsAttention.length > 0 || disputed.length > 0) && (
+        <section className="space-y-3">
+          <Heading tone="alert">Needs attention ({needsAttention.length + disputed.length})</Heading>
+          {needsAttention.length > 0 && (
+            <ul className="divide-y divide-red-100 border-2 border-red-200 bg-white">
+              {needsAttention.map((m) => (
+                <li key={m.id} className="p-3 text-sm">
+                  <p className="text-navy-900">
+                    <span className="text-xs font-bold uppercase text-ink/45">{view.label(m)}</span> · {view.name(m.teamAId)} vs{" "}
+                    {view.name(m.teamBId)} — past due, not reported
+                    {m.stage === "knockout" ? " (playoff: pick a winner)" : ""}
+                  </p>
+                  <div className="mt-2">{override(m)}</div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {disputed.length > 0 && (
+            <ul className="space-y-3">
+              {disputed.map((m) => {
+                const report = view.reportByMatch.get(m.id);
+                if (!report) return null;
                 return (
-                  <div key={pool}>
-                    <h3 className="font-display text-lg font-extrabold uppercase text-navy-900">
-                      Pool {pool}
-                      <span className="ml-2 text-xs font-normal normal-case text-ink/40">
-                        {poolTeams.length} teams · {isDraft ? `${poolMatches.length} matches` : `${played}/${poolMatches.length} played`}
-                      </span>
-                    </h3>
-                    <ul className="mt-2 divide-y divide-navy-900/5 border-2 border-navy-900/10 bg-white">
-                      {ordered.map((t, i) => {
-                        const s = standings.find((x) => x.teamId === t.id);
-                        const movesUp = !isDraft && i < league.advancePerPool;
-                        return (
-                          <li
-                            key={t.id}
-                            className={cn(
-                              "flex flex-wrap items-center justify-between gap-3 p-4",
-                              !isDraft && i === league.advancePerPool - 1 && "border-b-4 border-b-gold-500",
-                            )}
-                          >
-                            <div className="min-w-0">
-                              <p className="text-sm font-semibold text-navy-900">
-                                {!isDraft && s ? `${s.rank}. ` : ""}
-                                {t.name}
-                                {movesUp && (
-                                  <span className="ml-2 bg-gold-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-navy-900">
-                                    Moves up
-                                  </span>
-                                )}
-                                {!isDraft && s?.tiebreak === "unresolved" && (
-                                  <span className="ml-2 bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">
-                                    Tie — exec decides
-                                  </span>
-                                )}
-                              </p>
-                              <p className="mt-0.5 text-xs text-ink/50">
-                                {who(t.roster.filter((m) => m.inviteStatus === "accepted"))}
-                                {!isDraft && s ? ` · ${s.wins}-${s.losses} · games ${s.gameDiff >= 0 ? "+" : ""}${s.gameDiff}` : ""}
-                              </p>
-                            </div>
-                            {!isEnded && (
-                              <div className="flex items-center gap-3">
-                                {isDraft && <MoveTeamPoolSelect teamId={t.id} currentPool={t.pool} pools={pools} />}
-                                <WithdrawTeamButton teamId={t.id} live={isLive} />
-                              </div>
-                            )}
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </div>
+                  <li key={m.id} className="border-2 border-red-300 bg-red-50 p-4">
+                    <p className="text-sm text-navy-900">
+                      {view.name(m.teamAId)} vs {view.name(m.teamBId)} — reported {report.games.map(([a, b]) => `${a}-${b}`).join(", ")}, winner
+                      claimed: {view.name(report.winnerTeamId)}
+                    </p>
+                    <p className="mt-1 text-xs text-red-700">Dispute reason: {report.disputeReason}</p>
+                    {isAdmin(viewer) && m.teamAId && m.teamBId ? (
+                      <div className="mt-3">
+                        <ResolveDisputeForm
+                          reportId={report.id}
+                          teamAId={m.teamAId}
+                          teamAName={view.name(m.teamAId)}
+                          teamBId={m.teamBId}
+                          teamBName={view.name(m.teamBId)}
+                        />
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-xs text-ink/55">Waiting on an admin.</p>
+                    )}
+                  </li>
                 );
               })}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* ── Playoffs ── */}
+      {isLive && (
+        <section className="space-y-4">
+          <Heading>Playoffs</Heading>
+          {view.knockout.length > 0 ? (
+            <>
+              <Bracket view={view} actions={override} />
+              {!bracketStarted && (
+                <div className="flex flex-wrap items-start gap-4">
+                  <div className="space-y-2">
+                    <p className="text-xs text-ink/50">Swap a team in the bracket (e.g. you broke a tie differently):</p>
+                    <div className="flex flex-wrap gap-2">
+                      {bracketTeams.map((tid) => (
+                        <SwapSelect
+                          key={tid}
+                          teamId={tid}
+                          label={`Swap ${view.name(tid)}…`}
+                          options={scheduled.filter((t) => t.id !== tid).map((t) => ({ id: t.id, label: t.name }))}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <MakePlayoffsButton tournamentId={league.id} size={league.playoffTeams} regenerate />
+                  <ScrapPlayoffsButton tournamentId={league.id} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs text-ink/55">
+                When the round robin and catch-up week are done (every match settled), seed the top {league.playoffTeams} into the bracket.
+              </p>
+              <MakePlayoffsButton tournamentId={league.id} size={league.playoffTeams} regenerate={false} />
+            </div>
+          )}
+        </section>
+      )}
+
+      {/* ── Standings + schedule (draft and live) ── */}
+      {(isDraft || isLive || isEnded) && (
+        <section className="space-y-6">
+          {!isDraft && (
+            <div>
+              <Heading>Standings</Heading>
+              <div className="mt-3">
+                <StandingsTable view={view} playoffTeams={league.playoffTeams} />
+              </div>
             </div>
           )}
 
-          {isDraft && leftOut.length > 0 && (
-            <div className="mt-8">
-              <h3 className="font-display text-sm font-bold uppercase tracking-wide text-red-700">
-                Not in the draw ({leftOut.length})
-              </h3>
+          <div>
+            <Heading>{isDraft ? "Draft schedule — only exec can see this" : "Schedule"}</Heading>
+            {isLive && <p className="mt-1 text-xs text-ink/45">Use &quot;Edit result&quot; on any match to enter a score, award a forfeit, reopen it, or give it another week.</p>}
+            <div className="mt-3 space-y-4">
+              {view.weeks.map((w) =>
+                isLive && w !== currentWeek ? (
+                  <details key={w} open={w === currentWeek - 1}>
+                    <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-navy-800">
+                      Week {w}
+                      {season ? ` · ${weekRange(season.seasonStartsOn, w)}` : ""}
+                      {w < currentWeek ? ` · ${view.pool.filter((m) => m.round === w && (m.status === "confirmed" || m.status === "forfeited")).length} settled` : ""}
+                    </summary>
+                    <div className="mt-2">
+                      <WeekSchedule view={view} week={w} actions={override} />
+                    </div>
+                  </details>
+                ) : (
+                  <WeekSchedule key={w} view={view} week={w} actions={isLive ? override : undefined} />
+                ),
+              )}
+            </div>
+          </div>
+
+          {!isEnded && (scheduled.length > 0 || openSlots.length > 0) && (
+            <div>
+              <Heading>Teams on the schedule ({scheduled.length})</Heading>
+              {isDraft && <p className="mt-1 text-xs text-ink/45">Swap trades two teams&apos; entire schedules — nothing else moves.</p>}
+              <ul className="mt-3 divide-y divide-navy-900/5 border-2 border-navy-900/10 bg-white">
+                {openSlots.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 bg-gold-500/10 p-4">
+                    <div>
+                      <p className="text-sm font-semibold text-navy-900">{t.name}</p>
+                      <p className="text-xs text-ink/55">Empty — opponents have a bye. A late team can take it over from this week on.</p>
+                    </div>
+                    <FillSlotForm placeholderId={t.id} options={unscheduledReady.map((u) => ({ id: u.id, label: u.name }))} />
+                  </li>
+                ))}
+                {scheduled.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-navy-900">{t.name}</p>
+                      <p className="mt-0.5 text-xs text-ink/50">{who(t.roster.filter((m) => m.inviteStatus === "accepted"))}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {isDraft && <SwapSelect teamId={t.id} options={swapOptions(t.id)} />}
+                      <WithdrawTeamButton teamId={t.id} scheduled />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {!isEnded && unscheduled.length > 0 && (
+            <div>
+              <Heading tone="alert">Not on the schedule ({unscheduled.length})</Heading>
               <p className="mt-1 text-xs text-ink/50">
-                Pair solo players, then drop the new team into a pool — or they sit out once you publish.
+                {openSlots.length > 0
+                  ? "Give a complete team an open slot above. Solo players: pair them first."
+                  : "No open slots. A late team can only join where there's an open slot — a withdrawal creates one."}
               </p>
               <ul className="mt-2 divide-y divide-navy-900/5 border-2 border-red-200 bg-white">
-                {leftOut.map((t) => (
+                {unscheduled.map((t) => (
                   <li key={t.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
                     <div>
                       <p className="text-sm font-semibold text-navy-900">
@@ -295,9 +469,9 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                       <p className="text-xs text-ink/50">{who(t.roster)}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
-                      {t.readiness === "ready" && <MoveTeamPoolSelect teamId={t.id} currentPool={null} pools={pools} />}
-                      {soloTeams.some((s) => s.id === t.id) && <PairTeamForm teamId={t.id} options={pairOptions(t.id)} />}
-                      <WithdrawTeamButton teamId={t.id} live={false} />
+                      {isDraft && t.readiness === "ready" && <SwapSelect teamId={t.id} label="Replace…" options={scheduled.map((s) => ({ id: s.id, label: s.name }))} />}
+                      {isDraft && soloTeams.some((s) => s.id === t.id) && <PairTeamForm teamId={t.id} options={pairOptions(t.id)} />}
+                      <WithdrawTeamButton teamId={t.id} scheduled={false} />
                     </div>
                   </li>
                 ))}
@@ -306,56 +480,27 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
           )}
 
           {isDraft && (
-            <div className="mt-6 flex flex-wrap items-start gap-3">
-              <GenerateDraftButton tournamentId={league.id} regenerate closesText={null} />
-              <PublishDrawButton tournamentId={league.id} leftOut={leftOut.length} />
+            <div className="flex flex-wrap items-start gap-6 border-t-2 border-navy-900/10 pt-6">
+              <PublishDrawButton tournamentId={league.id} leftOut={unscheduled.length} />
+              <GenerateDraftButton tournamentId={league.id} regenerate teamCount={scheduled.length + unscheduledReady.length} closesText={null} />
               <DiscardDraftButton tournamentId={league.id} />
             </div>
           )}
         </section>
       )}
 
-      {isAdmin(viewer) && disputed.length > 0 && (
-        <section>
-          <h2 className="font-display text-sm font-bold uppercase tracking-wide text-red-600">
-            Disputed scores ({disputed.length})
-          </h2>
-          <ul className="mt-3 space-y-3">
-            {disputed.map(({ report, match }) => (
-              <li key={report.id} className="border-2 border-red-300 bg-red-50 p-4">
-                <p className="text-sm text-navy-900">
-                  {teamName(match.teamAId)} vs {teamName(match.teamBId)} — reported{" "}
-                  {report.games.map(([a, b]) => `${a}-${b}`).join(", ")}, winner claimed: {teamName(report.winnerTeamId)}
-                </p>
-                <p className="mt-1 text-xs text-red-700">Dispute reason: {report.disputeReason}</p>
-                {match.teamAId && match.teamBId && (
-                  <div className="mt-3">
-                    <ResolveDisputeForm
-                      reportId={report.id}
-                      teamAId={match.teamAId}
-                      teamAName={teamName(match.teamAId)}
-                      teamBId={match.teamBId}
-                      teamBName={teamName(match.teamBId)}
-                    />
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
+      {!isEnded && (
+        <section className="space-y-2">
+          <Heading>Add a team directly</Heading>
+          <p className="text-xs text-ink/45">
+            For a late sign-up or a re-pair. Both players must have signed in to the site once and not be on another team. They&apos;re
+            confirmed immediately{isRegistration ? "" : ", then show under “Not on the schedule” until you give them an open slot"}.
+          </p>
+          <AddTeamForm tournamentId={league.id} />
         </section>
       )}
 
-      {!isAdmin(viewer) && disputed.length > 0 && (
-        <p className="text-sm text-red-700">
-          {disputed.length} disputed score{disputed.length === 1 ? "" : "s"} waiting on an admin.
-        </p>
-      )}
-
-      {withdrawn.length > 0 && (
-        <p className="text-xs text-ink/40">
-          Withdrawn: {withdrawn.map((t) => t.name).join(", ")}
-        </p>
-      )}
+      {withdrawn.length > 0 && <p className="text-xs text-ink/40">Withdrawn: {withdrawn.map((t) => t.name).join(", ")}</p>}
 
       {isLive && (
         <div className="border-t-2 border-navy-900/10 pt-6">

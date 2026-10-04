@@ -10,6 +10,7 @@
     "test": "node --test 'src/**/*.test.ts'",
     "test:league": "NODE_PATH=scripts/stubs tsx --env-file=.env scripts/league-edge-tests.ts",
     "test:rsvp": "NODE_PATH=scripts/stubs tsx --env-file=.env scripts/rsvp-edge-tests.ts",
+    "test:season": "NODE_PATH=scripts/stubs tsx --env-file=.env scripts/season-edge-tests.ts",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",

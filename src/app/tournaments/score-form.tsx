@@ -1,13 +1,16 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
-import { reportScore, disputeScore, type ActionResult } from "./actions";
+import { useRouter } from "next/navigation";
+import { reportScore, disputeScore, confirmScore, markOutOfTown, postMatchTime, type ActionResult } from "./actions";
 import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
 const safeReportScore = safeAction(reportScore);
 const safeDisputeScore = safeAction(disputeScore);
+const safeConfirmScore = safeAction(confirmScore);
+const safeMarkOutOfTown = safeAction(markOutOfTown);
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -122,6 +125,118 @@ export function DisputeScoreButton({ matchId }: { matchId: string }) {
           Cancel
         </button>
       </div>
+    </form>
+  );
+}
+
+/** The other team agrees with the reported score. */
+export function ConfirmScoreButton({ matchId }: { matchId: string }) {
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<ActionResult | null>(null);
+  const router = useRouter();
+  return (
+    <span className="inline-flex flex-col gap-1">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() =>
+          start(async () => {
+            const res = await safeConfirmScore(matchId);
+            setResult(res);
+            if (res.ok) router.refresh();
+          })
+        }
+        className="h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
+      >
+        {pending ? "Saving…" : "Confirm score"}
+      </button>
+      {result?.error && <span className="text-xs text-red-600">{result.error}</span>}
+    </span>
+  );
+}
+
+/** Push this week's match to a makeup next week. Two taps, because the asking team forfeits if the makeup isn't played. */
+export function OutOfTownButton({ matchId }: { matchId: string }) {
+  const [armed, setArmed] = useState(false);
+  const [pending, start] = useTransition();
+  const [result, setResult] = useState<ActionResult | null>(null);
+  const router = useRouter();
+
+  if (result?.ok) return <p className="text-xs text-navy-800">{result.message}</p>;
+  if (!armed) {
+    return (
+      <button type="button" onClick={() => setArmed(true)} className="text-xs font-bold uppercase text-ink/55 underline underline-offset-2">
+        Can&apos;t make it this week
+      </button>
+    );
+  }
+  return (
+    <div className="mt-2 border-2 border-gold-500 bg-gold-500/10 p-3">
+      <p className="text-sm text-navy-900">
+        Sick or out of town? This match becomes a makeup due next Saturday, and your opponents are emailed. If the makeup
+        doesn&apos;t happen — for either team — your team forfeits it. Only once per match.
+      </p>
+      <div className="mt-2 flex gap-3">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              const res = await safeMarkOutOfTown(matchId);
+              setResult(res);
+              if (res.ok) router.refresh();
+            })
+          }
+          className="h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
+        >
+          {pending ? "Saving…" : "Move to next week"}
+        </button>
+        <button type="button" onClick={() => setArmed(false)} className="text-xs font-bold uppercase text-ink/50">
+          Cancel
+        </button>
+      </div>
+      {result?.error && <p className="mt-2 text-xs text-red-600">{result.error}</p>}
+    </div>
+  );
+}
+
+/** Post (or change) when the match will be played. Due Wednesday 11:59 PM. */
+export function PostTimeForm({ matchId, current, currentNote }: { matchId: string; current: string | null; currentNote: string | null }) {
+  const [state, action] = useActionState(safeAction(postMatchTime), initialState);
+  const [open, setOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className={
+          current
+            ? "text-xs font-bold uppercase text-ink/55 underline underline-offset-2"
+            : "h-9 bg-gold-500 px-4 text-xs font-bold uppercase text-navy-900 hover:bg-gold-400"
+        }
+      >
+        {current ? "Change time" : "Post match time"}
+      </button>
+    );
+  }
+  return (
+    <form action={action} className="mt-2 flex flex-wrap items-end gap-2 border-2 border-navy-900/10 bg-white p-3">
+      <input type="hidden" name="matchId" value={matchId} />
+      <label className="text-[11px] font-bold uppercase text-ink/50">
+        When (Pacific)
+        <input type="datetime-local" name="when" required defaultValue={current ?? ""} className="mt-1 block h-9 border-2 border-navy-900/15 bg-chalk px-2 text-sm" />
+      </label>
+      <label className="text-[11px] font-bold uppercase text-ink/50">
+        Where / note
+        <input name="note" maxLength={80} defaultValue={currentNote ?? ""} placeholder="Court 3" className="mt-1 block h-9 w-36 border-2 border-navy-900/15 bg-chalk px-2 text-sm" />
+      </label>
+      <SubmitButton label="Post" />
+      <button type="button" onClick={() => setOpen(false)} className="h-9 px-2 text-xs font-bold uppercase text-ink/50">
+        Cancel
+      </button>
+      {state.error && <p className="w-full text-xs text-red-600">{state.error}</p>}
+      {state.ok && state.message && <p className="w-full text-xs text-navy-800">{state.message}</p>}
     </form>
   );
 }

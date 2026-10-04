@@ -19,9 +19,10 @@ Supporting docs:
 ```bash
 export PATH="$HOME/.nvm/versions/node/v24.20.0/bin:$PATH"   # node is not on PATH
 npm run dev          # localhost:3000
-npm test             # node --test over src/**/*.test.ts  (134 passing)
+npm test             # node --test over src/**/*.test.ts  (153 passing)
 npm run test:league  # signup edge cases against the real DB, always rolled back
 npm run test:rsvp    # RSVP + check-in edge cases, a 40-way race for 20 spots, and a check-in race, against the real DB
+npm run test:season  # league season engine (weekly draw, open slots, playoffs, hourly clock) against the real DB, always rolled back
 npm run lint
 npm run build
 npm run db:push      # apply schema to Neon — see the warning below before using it

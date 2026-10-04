@@ -1,6 +1,7 @@
 import { relations } from "drizzle-orm";
 import {
   boolean,
+  date,
   integer,
   jsonb,
   pgEnum,
@@ -244,6 +245,17 @@ export const tournaments = pgTable("tournament", {
    * After, they're locked, teams have been emailed, and weekly nudges start.
    */
   poolsAnnouncedAt: timestamp("pools_announced_at", { withTimezone: true }),
+  /**
+   * Weekly season (see src/lib/schedule.ts). Monday of week 1, as a Pacific
+   * calendar date. Every team plays one match a week for `roundRobinWeeks`
+   * weeks, then `catchupWeeks` of makeups only, then single elimination with
+   * the top `playoffTeams`, ending in a final on `finalOn`.
+   */
+  seasonStartsOn: date("season_starts_on", { mode: "string" }),
+  roundRobinWeeks: integer("round_robin_weeks").notNull().default(7),
+  catchupWeeks: integer("catchup_weeks").notNull().default(1),
+  playoffTeams: integer("playoff_teams").notNull().default(8),
+  finalOn: date("final_on", { mode: "string" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -257,6 +269,12 @@ export const tmTeams = pgTable("tm_team", {
   /** Pool label: "A", "B", ... Null until the draw runs. */
   pool: text("pool"),
   status: teamStatusEnum("status").notNull().default("registered"),
+  /**
+   * An open slot in the weekly schedule, not a real team — no members. Whoever
+   * is drawn against it that week has a bye. A late team takes it over (and
+   * its remaining matches), so nobody else's schedule moves.
+   */
+  isPlaceholder: boolean("is_placeholder").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -283,10 +301,7 @@ export const matches = pgTable("match", {
   stage: matchStageEnum("stage").notNull(),
   /** Pool label for pool matches; null in knockout. */
   pool: text("pool"),
-  /**
-   * Knockout round, increasing toward the final. Null for pool matches — pool
-   * play has no rounds, just one window in which all 28 matches can happen.
-   */
+  /** Season week (1-based) for round-robin matches; knockout round (1 = first) for playoff matches. */
   round: integer("round"),
   slot: integer("slot"),
   teamAId: uuid("team_a_id").references(() => tmTeams.id, { onDelete: "set null" }),
@@ -302,6 +317,22 @@ export const matches = pgTable("match", {
   nextSlot: integer("next_slot"),
   /** Last time the weekly Sunday nudge mentioned this match. Caps it at once/week. */
   lastNudgedAt: timestamp("last_nudged_at", { withTimezone: true }),
+  /**
+   * Set when a team said they're out of town: dueBy moved a week later, and if
+   * the makeup isn't played this team forfeits it. Once per match.
+   */
+  extendedForTeamId: uuid("extended_for_team_id").references(() => tmTeams.id, { onDelete: "set null" }),
+  /** Unused — a Monday matchup email was dropped to keep it to two reminders a week. Kept so old rows stay valid. */
+  weekEmailSentAt: timestamp("week_email_sent_at", { withTimezone: true }),
+  /** The Thursday "no match time posted yet" email went out. Cleared when a match is pushed to a makeup week. */
+  reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
+  /** When the teams say they'll play — posted by any of the four players, due Wednesday 11:59 PM. Cleared on a makeup. */
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
+  /** Free text with the time, e.g. "Court 3" or "Clark Kerr". */
+  scheduledNote: text("scheduled_note"),
+  scheduledBy: uuid("scheduled_by").references(() => users.id, { onDelete: "set null" }),
+  /** The Saturday-morning "report your score by tonight" email went out. Cleared on a makeup. */
+  reportReminderSentAt: timestamp("report_reminder_sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { withTransaction, type Tx } from "@/db/pool";
 import { db, schema } from "@/db";
 import {
@@ -460,6 +460,101 @@ export async function pairFreeAgentsTx(tx: Tx, input: { teamAId: string; teamBId
   }
 }
 
+/**
+ * After registration closes: every solo player with no invite out is paired
+ * at random. With an odd number, one is left over (returned) for exec to
+ * sort out — pair them with a late sign-up, or withdraw them.
+ */
+export async function randomPairFreeAgentsTx(
+  tx: Tx,
+  input: { tournamentId: string; rng?: () => number },
+): Promise<{ pairs: [string, string][]; leftover: string | null }> {
+  const league = await lockLeague(tx, input.tournamentId);
+  if (league.poolsAnnouncedAt) throw new LeagueError("Pools are already published — pairing is closed.");
+  if (isRegistrationOpen(league, new Date())) {
+    throw new LeagueError("Registration is still open — free agents can still find their own partner. Pair them after it closes.");
+  }
+
+  const rows = await tx
+    .select({
+      teamId: schema.tmTeams.id,
+      inviteStatus: schema.tmTeamMembers.inviteStatus,
+    })
+    .from(schema.tmTeams)
+    .innerJoin(schema.tmTeamMembers, eq(schema.tmTeamMembers.teamId, schema.tmTeams.id))
+    .where(and(eq(schema.tmTeams.tournamentId, league.id), ne(schema.tmTeams.status, "withdrawn"), isNull(schema.tmTeams.pool)));
+  const byTeam = new Map<string, { accepted: number; pending: number }>();
+  for (const r of rows) {
+    const t = byTeam.get(r.teamId) ?? { accepted: 0, pending: 0 };
+    if (r.inviteStatus === "accepted") t.accepted++;
+    if (r.inviteStatus === "pending") t.pending++;
+    byTeam.set(r.teamId, t);
+  }
+  const solos = [...byTeam.entries()].filter(([, t]) => t.accepted === 1 && t.pending === 0).map(([id]) => id);
+
+  const rng = input.rng ?? Math.random;
+  for (let i = solos.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [solos[i], solos[j]] = [solos[j], solos[i]];
+  }
+
+  const pairs: [string, string][] = [];
+  for (let i = 0; i + 1 < solos.length; i += 2) {
+    await pairFreeAgentsTx(tx, { teamAId: solos[i], teamBId: solos[i + 1] });
+    pairs.push([solos[i], solos[i + 1]]);
+  }
+  return { pairs, leftover: solos.length % 2 ? solos[solos.length - 1] : null };
+}
+
+/**
+ * Exec adds a complete team directly — a late team after registration
+ * closed, or a fix-up. Both players must be approved members who aren't on
+ * a team in another active league. They're confirmed immediately (no invite
+ * step). The team isn't scheduled yet: put it in an open slot after this.
+ */
+export async function execAddTeamTx(
+  tx: Tx,
+  input: { tournamentId: string; teamName?: string; emailA: string; emailB: string },
+): Promise<{ teamId: string; teamName: string }> {
+  const league = await lockLeague(tx, input.tournamentId);
+  if (league.status === "complete") throw new LeagueError("This league has ended.");
+
+  const emails = [input.emailA, input.emailB].map((e) => e.trim().toLowerCase());
+  if (emails[0] === emails[1]) throw new LeagueError("Enter two different players.");
+  const ids: string[] = [];
+  for (const email of emails) {
+    const id = await findUserIdByEmail(tx, email);
+    if (!id) throw new LeagueError(`${email} hasn't signed in to the site yet — they need to sign in once first.`);
+    ids.push(id);
+  }
+  const users = await lockUsers(tx, ids);
+  const players = ids.map((id) => users.get(id)!);
+  for (const [i, p] of players.entries()) {
+    if (p.status !== "approved") throw new LeagueError(`${emails[i]} isn't an approved member yet.`);
+    if (league.eligibility === "competitive_only" && !p.onCompetitiveTeam) {
+      throw new LeagueError(`${emails[i]} isn't on the Competitive Team, and this league is Competitive-Team only.`);
+    }
+    const committed = await committedLeague(tx, p.id);
+    if (committed) {
+      throw new LeagueError(
+        `${emails[i]} is already on a team in the ${committed.name}. Withdraw that team first if they're switching.`,
+      );
+    }
+  }
+
+  const teamName = input.teamName?.trim() || defaultTeamName(players[0], players[1]);
+  const [team] = await tx
+    .insert(schema.tmTeams)
+    .values({ tournamentId: league.id, name: teamName, status: "registered" })
+    .returning({ id: schema.tmTeams.id });
+  await tx.insert(schema.tmTeamMembers).values([
+    { teamId: team.id, memberId: players[0].id, isCaptain: true, inviteStatus: "accepted" },
+    { teamId: team.id, memberId: players[1].id, isCaptain: false, inviteStatus: "accepted" },
+  ]);
+  for (const p of players) await declineOtherInvites(tx, p.id, team.id);
+  return { teamId: team.id, teamName };
+}
+
 /* ── wrappers the server actions call ─────────────────────────────────── */
 
 export const registerForLeague = (input: Parameters<typeof registerForLeagueTx>[1]) =>
@@ -472,6 +567,9 @@ export const leaveLeague = (input: Parameters<typeof leaveLeagueTx>[1]) =>
   withTransaction((tx) => leaveLeagueTx(tx, input));
 export const pairFreeAgents = (input: Parameters<typeof pairFreeAgentsTx>[1]) =>
   withTransaction((tx) => pairFreeAgentsTx(tx, input));
+export const randomPairFreeAgents = (tournamentId: string) =>
+  withTransaction((tx) => randomPairFreeAgentsTx(tx, { tournamentId }));
+export const execAddTeam = (input: Parameters<typeof execAddTeamTx>[1]) => withTransaction((tx) => execAddTeamTx(tx, input));
 
 /* ── reads ────────────────────────────────────────────────────────────── */
 

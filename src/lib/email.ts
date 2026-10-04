@@ -1,8 +1,9 @@
 import "server-only";
 import { Resend } from "resend";
 import { env } from "@/lib/env";
-import { club } from "@/lib/content";
+import { club, leagueInfo } from "@/lib/content";
 import { formatDeadline, formatEventWhen } from "@/lib/dates";
+import { scheduleBy } from "@/lib/schedule";
 
 type EventLike = { title: string; location: string; startsAt: Date; endsAt: Date };
 type Recipient = { email: string; name: string | null };
@@ -47,6 +48,32 @@ async function sendEmail(to: string, subject: string, html: string): Promise<voi
     if (error) console.error(`Resend rejected "${subject}" to ${to}: ${error.name} — ${error.message}`);
   } catch (err) {
     console.error(`Failed to send "${subject}" to ${to}`, err);
+  }
+}
+
+type Message = { to: string; subject: string; html: string };
+
+/**
+ * Sends many at once through Resend's batch endpoint (100 per call) — the
+ * weekly league emails go to ~80 players at the same moment, which would trip
+ * the per-second rate limit one request at a time. Never throws.
+ */
+export async function sendMany(messages: Message[]): Promise<void> {
+  if (messages.length === 0) return;
+  const key = env().RESEND_API_KEY;
+  if (!key) {
+    for (const m of messages) console.log(`[email:dev] to=${m.to} subject="${m.subject}"\n${m.html}\n`);
+    return;
+  }
+  client ??= new Resend(key);
+  for (let i = 0; i < messages.length; i += 100) {
+    const chunk = messages.slice(i, i + 100).map((m) => ({ from: env().EMAIL_FROM, ...m }));
+    try {
+      const { error } = await client.batch.send(chunk);
+      if (error) console.error(`Resend rejected a batch of ${chunk.length}: ${error.name} — ${error.message}`);
+    } catch (err) {
+      console.error(`Failed to send a batch of ${chunk.length}`, err);
+    }
   }
 }
 
@@ -155,42 +182,6 @@ export async function sendPartnerInvite(
   await sendEmail(to.email, `Team invite: ${tournamentName}`, html);
 }
 
-export async function sendPoolsAnnounced(
-  to: Recipient,
-  {
-    tournamentName,
-    teamName,
-    pool,
-    opponents,
-    location,
-    advancePerPool,
-  }: {
-    tournamentName: string;
-    teamName: string;
-    pool: string;
-    opponents: (string | null)[];
-    location: string | null;
-    advancePerPool: number;
-  },
-): Promise<void> {
-  const list = opponents.length
-    ? `<ul style="margin:8px 0 0;padding-left:20px;">${opponents.map((o) => `<li>${esc(o) || "TBD"}</li>`).join("")}</ul>`
-    : `<p style="margin:8px 0 0;color:#4b5566;">No other teams in your pool yet.</p>`;
-  const html = layout(
-    `${teamName} is in Pool ${pool}.`,
-    `${hey(to)}
-     <p><strong>${esc(teamName)}</strong> is in <strong>Pool ${esc(pool)}</strong> for the
-     ${esc(tournamentName)}. You'll play everyone in your pool once, on your own schedule${
-       location ? `, at ${esc(location)}` : ""
-     }:</p>
-     ${list}
-     <p>The top ${advancePerPool} in each pool move up. Watch for a weekly reminder with whichever
-     match is still unplayed — get them scheduled early.</p>
-     ${button(`${club.url}/tournaments`, "See your pool")}`,
-  );
-  await sendEmail(to.email, `${tournamentName}: you're in Pool ${pool}`, html);
-}
-
 export async function sendScoreReported(
   to: Recipient,
   { tournamentName, reporterName, summary }: { tournamentName: string; reporterName: string | null; summary: string },
@@ -209,35 +200,121 @@ export async function sendScoreReported(
   await sendEmail(to.email, `Score reported: ${tournamentName}`, html);
 }
 
-/** The Sunday nudge — reminds a team of their next unplayed match, with a friendly line about their last result if they have one. */
-export async function sendWeeklyNudge(
+/* ─── Pickleball League season ───────────────────────────────────────────── */
+
+export type MatchLine = {
+  /** "Week 3 · Oct 19–25", "Makeup (week 2)", "Quarterfinals" */
+  label: string;
+  dueBy: Date;
+  /** Null = a bye (open slot). */
+  opponent: { name: string; players: Recipient[] } | null;
+};
+
+function opponentHtml(o: NonNullable<MatchLine["opponent"]>): string {
+  const players = o.players
+    .map((p) => `${esc(p.name) || esc(p.email)} (<a href="mailto:${esc(p.email)}" style="color:#0a2a66;">${esc(p.email)}</a>)`)
+    .join(" &amp; ");
+  return `<strong>${esc(o.name)}</strong>${players ? `<br><span style="color:#4b5566;font-size:13px;">${players}</span>` : ""}`;
+}
+
+function matchBox(m: MatchLine): string {
+  return `
+    <div style="margin:12px 0;padding:14px 16px;background:#f6f7f9;border-left:4px solid #fdb515;">
+      <p style="margin:0 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;color:#4b5566;">${esc(m.label)}</p>
+      <p style="margin:0;">${m.opponent ? `vs ${opponentHtml(m.opponent)}` : "<strong>Bye</strong> — no match this week."}</p>
+      ${m.opponent ? `<p style="margin:6px 0 0;color:#4b5566;font-size:13px;">Post your time by ${esc(formatDeadline(scheduleBy(m.dueBy)))} · report by ${esc(formatDeadline(m.dueBy))}</p>` : ""}
+    </div>`;
+}
+
+const bookingLine = `<p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.courtBookingNote)} <a href="${leagueInfo.courtBookingUrl}" style="color:#0a2a66;">Book a court</a>.</p>`;
+
+/** The season is published: your whole round-robin schedule, week by week. */
+export function scheduleAnnouncedEmail(
   to: Recipient,
-  {
-    tournamentName,
-    teamName,
-    opponentName,
-    lastResult,
-  }: {
-    tournamentName: string;
-    teamName: string;
-    opponentName: string | null;
-    lastResult: { won: boolean; opponentName: string | null } | null;
-  },
+  d: { tournamentName: string; teamName: string; weeks: MatchLine[]; playoffTeams: number },
+): Message {
+  const rows = d.weeks
+    .map(
+      (w) =>
+        `<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:13px;color:#4b5566;white-space:nowrap;">${esc(w.label)}</td><td style="padding:6px 8px;border-bottom:1px solid #eee;font-size:14px;">${w.opponent ? esc(w.opponent.name) : "<em>Bye</em>"}</td></tr>`,
+    )
+    .join("");
+  return {
+    to: to.email,
+    subject: `${d.tournamentName}: your schedule is out`,
+    html: layout(
+      `${d.teamName}'s ${d.tournamentName} schedule.`,
+      `${hey(to)}
+       <p>The ${esc(d.tournamentName)} schedule is out. <strong>${esc(d.teamName)}</strong> plays one match a week:</p>
+       <table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>
+       <p>${esc(leagueInfo.weekRule)} Your opponents' contact info is on the site — message them on Slack to set a time.</p>
+       <p>The top ${d.playoffTeams} make the playoffs.</p>
+       ${bookingLine}
+       ${button(`${club.url}/tournaments`, "See the full schedule")}`,
+    ),
+  };
+}
+
+/** Thursday: the Wednesday cut-off passed and nobody posted when this week's match is. */
+export function noTimePostedEmail(to: Recipient, d: { tournamentName: string; teamName: string; matches: MatchLine[] }): Message {
+  return {
+    to: to.email,
+    subject: `${d.tournamentName}: post your match time`,
+    html: layout(
+      `No match time posted for ${d.teamName} yet.`,
+      `${hey(to)}
+       <p>The Wednesday cut-off passed and nobody has posted when <strong>${esc(d.teamName)}</strong> is playing:</p>
+       ${d.matches.map(matchBox).join("")}
+       <p>Lock in a time with your opponents on Slack, post it on the site, and play and report by Saturday 11:59 PM.
+       Sick or out of town? Let your opponents know and tap <strong>Can't make it this week</strong> — it becomes a makeup next week.</p>
+       <p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.noShowRule)}</p>
+       ${button(`${club.url}/tournaments`, "Post a time")}`,
+    ),
+  };
+}
+
+/** Saturday morning: the score is due tonight. */
+export function reportTonightEmail(to: Recipient, d: { tournamentName: string; teamName: string; matches: MatchLine[] }): Message {
+  return {
+    to: to.email,
+    subject: `${d.tournamentName}: report your score by tonight`,
+    html: layout(
+      `${d.teamName}'s score is due tonight.`,
+      `${hey(to)}
+       <p>No score yet for <strong>${esc(d.teamName)}</strong> — it's due <strong>tonight at 11:59 PM</strong>:</p>
+       ${d.matches.map(matchBox).join("")}
+       <p>Once you've played, any one of the four players can report it on the site.</p>
+       <p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.noShowRule)}</p>
+       ${button(`${club.url}/tournaments`, "Report the score")}`,
+    ),
+  };
+}
+
+/** Someone in the match said their team can't make it this week — the match moved to a makeup week. */
+export function outOfTownEmail(
+  to: Recipient,
+  d: { tournamentName: string; requestingTeam: string; otherTeam: string; newDueBy: Date },
+): Message {
+  return {
+    to: to.email,
+    subject: `${d.tournamentName}: match moved to a makeup`,
+    html: layout(
+      `${d.requestingTeam} vs ${d.otherTeam} is now a makeup.`,
+      `${hey(to)}
+       <p><strong>${esc(d.requestingTeam)}</strong> can't make it this week, so their match against
+       <strong>${esc(d.otherTeam)}</strong> is now a makeup, due <strong>${esc(formatDeadline(d.newDueBy))}</strong>.</p>
+       <p>That week you'll have this makeup plus your regular match — post a time for it by Wednesday like any other.
+       If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it.</p>
+       ${button(`${club.url}/tournaments`, "See your schedule")}`,
+    ),
+  };
+}
+
+/** A late team took over an open slot — their schedule from this week on. */
+export async function sendLateTeamSchedule(
+  to: Recipient,
+  d: { tournamentName: string; teamName: string; weeks: MatchLine[]; playoffTeams: number },
 ): Promise<void> {
-  const friendlyLine = lastResult
-    ? lastResult.won
-      ? `<p>🎉 Nice win last time out against ${esc(lastResult.opponentName) || "your opponent"} — keep it rolling.</p>`
-      : `<p>Tough one last time against ${esc(lastResult.opponentName) || "your opponent"} — get 'em this week.</p>`
-    : "";
-  const html = layout(
-    `Your next ${tournamentName} match is still unplayed.`,
-    `${hey(to)}
-     <p><strong>${esc(teamName)}</strong> still has a match to play against
-     <strong>${esc(opponentName) || "your remaining opponent"}</strong> in the ${esc(tournamentName)}.</p>
-     <p>Get a time on the calendar this week, and report the score from the Tournaments tab
-     once you're done.</p>
-     ${friendlyLine}
-     ${button(`${club.url}/tournaments`, "Open the Tournaments tab")}`,
-  );
-  await sendEmail(to.email, `Reminder: schedule your ${tournamentName} match`, html);
+  const m = scheduleAnnouncedEmail(to, d);
+  await sendEmail(m.to, `${d.tournamentName}: you're in — here's your schedule`, m.html);
 }

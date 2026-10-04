@@ -445,7 +445,17 @@ members are added as **attendees** — there is no per-user OAuth.
 
 ## TRANCHE F — Intramural tournament (post-MVP)
 
-Format is fixed: **pools of 8, full round robin (7 matches each), top 3 per pool
+> **Superseded for Fall 2026 (decided by the Social Team Director):** the
+> league now runs as a **weekly round robin** — one table per league, one
+> match per team per week (Mon–Sun, due Sunday 11:59 PM PT) for
+> `round_robin_weeks`, then `catchup_weeks` of makeups only, then single
+> elimination one round a week ending in a final on `final_on`. Open slots
+> (placeholder teams) give byes and let a late team join without moving anyone.
+> The rules live in `src/lib/schedule.ts` (unit tested) and the DB side in
+> `src/lib/tournament.ts` / `src/lib/social-league.ts` (`npm run test:season`).
+> The "one shared deadline, no weekly rounds" rule in F2 below no longer applies.
+
+Original format: **pools of 8, full round robin (7 matches each), top 3 per pool
 into single elimination.** Two divisions, Beginner and Advanced.
 
 - **F1 Registration + partner invite.** Captain registers, invites a partner by

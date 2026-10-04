@@ -13,7 +13,7 @@ jobs:
         run: |
           curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/event-reminders" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"
-      - name: Auto-confirm due tournament match reports
+      - name: League clock (auto-confirm scores, settle unplayed matches, weekly + reminder emails)
         run: |
-          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/tournament-autoconfirm" \
+          curl -sf -X GET "${{ secrets.SITE_URL }}/api/cron/league" \
             -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

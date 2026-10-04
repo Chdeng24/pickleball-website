@@ -49,7 +49,7 @@ export async function LeagueBanner({ user }: { user: SessionUser }) {
   } else if (onTeam) {
     title = `You're in the ${onTeam.league.name}`;
     body = onTeam.league.poolsAnnouncedAt
-      ? "Pools are out — check your matches and report scores on the Tournaments tab."
+      ? "The schedule is out — see this week's opponent and report scores on the Tournaments tab."
       : "See your partner status and team details on the Tournaments tab.";
     cta = "View your team";
   } else if (open.length > 0) {

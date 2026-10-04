@@ -8,7 +8,10 @@ import { db, schema } from "@/db";
 import { withTransaction } from "@/db/pool";
 import { checkMatchScore } from "@/lib/matchscore";
 import { AlreadyDone, invitePartner, leaveLeague, LeagueError, registerForLeague, respondToInvite } from "@/lib/league";
-import { sendPartnerInvite, sendScoreReported } from "@/lib/email";
+import { outOfTownEmail, sendMany, sendPartnerInvite, sendScoreReported } from "@/lib/email";
+import { laInputToUtc } from "@/lib/dates";
+import { outOfTownProblem, postTimeProblem, regularSeasonEndsAt, shiftDeadline } from "@/lib/schedule";
+import { MAKEUP_RESET, seasonConfig, settleMatchTx } from "@/lib/tournament";
 
 export type ActionResult = { ok: boolean; error?: string; message?: string };
 
@@ -188,8 +191,13 @@ export async function reportScore(_prev: ActionResult, formData: FormData): Prom
         .from(schema.matches)
         .where(eq(schema.matches.id, parsed.data.matchId))
         .for("update");
-      if (!match || !match.teamAId || !match.teamBId) throw new ActionError("That match no longer exists.");
-      if (match.status !== "pending") throw new ActionError("This match already has a score reported.");
+      if (!match || !match.teamAId || !match.teamBId) throw new ActionError("This match isn't set yet — the other team is still TBD.");
+      if (match.status !== "pending") throw new ActionError("This match already has a result.");
+      const sides = await tx
+        .select({ isPlaceholder: schema.tmTeams.isPlaceholder })
+        .from(schema.tmTeams)
+        .where(inArray(schema.tmTeams.id, [match.teamAId, match.teamBId]));
+      if (sides.some((t) => t.isPlaceholder)) throw new ActionError("That's a bye week — there's no match to report.");
 
       const [tournament] = await tx.select().from(schema.tournaments).where(eq(schema.tournaments.id, match.tournamentId));
       if (!tournament?.poolsAnnouncedAt || tournament.status === "complete") {
@@ -223,7 +231,130 @@ export async function reportScore(_prev: ActionResult, formData: FormData): Prom
   }
 
   refresh();
-  return { ok: true, message: "Score submitted — it confirms automatically unless someone disputes it." };
+  return { ok: true, message: "Score submitted — the other team can confirm it, or it confirms automatically unless disputed." };
+}
+
+/** The other team agrees with the reported score — confirms it now instead of waiting out the dispute window. */
+export async function confirmScore(matchId: string): Promise<ActionResult> {
+  const user = await requireMember();
+  if (!z.uuid().safeParse(matchId).success) return { ok: false, error: "That match no longer exists." };
+
+  try {
+    await withTransaction(async (tx) => {
+      const [match] = await tx.select().from(schema.matches).where(eq(schema.matches.id, matchId)).for("update");
+      if (match?.status === "confirmed") throw new AlreadyDone("Score confirmed.");
+      if (!match || match.status !== "reported" || !match.teamAId || !match.teamBId) {
+        throw new ActionError("There's no reported score to confirm on this match.");
+      }
+      const players = await matchPlayers([match.teamAId, match.teamBId]);
+      const me = players.find((p) => p.memberId === user.id);
+      if (!me) throw new ActionError("You're not playing in this match.");
+
+      const [report] = await tx.select().from(schema.matchReports).where(eq(schema.matchReports.matchId, match.id));
+      if (!report || report.confirmedAt || report.disputedBy) throw new ActionError("That score can't be confirmed anymore.");
+      const reporterTeam = players.find((p) => p.memberId === report.reportedBy)?.teamId;
+      if (reporterTeam === me.teamId) throw new ActionError("The other team has to confirm your score.");
+
+      await tx.update(schema.matchReports).set({ confirmedAt: new Date() }).where(eq(schema.matchReports.id, report.id));
+      await settleMatchTx(tx, match, "confirmed", report.winnerTeamId);
+    });
+  } catch (e) {
+    return fail(e);
+  }
+  refresh();
+  return { ok: true, message: "Score confirmed." };
+}
+
+/**
+ * "We can't make it this week" (sick, out of town): the match becomes a makeup due next Saturday.
+ * Once per match, round robin only. If the makeup isn't played, the team that
+ * asked forfeits it (src/lib/schedule.ts overdueOutcome).
+ */
+export async function markOutOfTown(matchId: string): Promise<ActionResult> {
+  const user = await requireMember();
+  if (!z.uuid().safeParse(matchId).success) return { ok: false, error: "That match no longer exists." };
+
+  let notify: { email: string; name: string | null }[] = [];
+  let mail: { tournamentName: string; requestingTeam: string; otherTeam: string; newDueBy: Date } | null = null;
+  try {
+    await withTransaction(async (tx) => {
+      const [match] = await tx.select().from(schema.matches).where(eq(schema.matches.id, matchId)).for("update");
+      if (!match || !match.teamAId || !match.teamBId) throw new ActionError("That match no longer exists.");
+      const [tournament] = await tx.select().from(schema.tournaments).where(eq(schema.tournaments.id, match.tournamentId));
+      if (!tournament?.poolsAnnouncedAt || tournament.status === "complete") throw new ActionError("The league isn't being played right now.");
+
+      const players = await matchPlayers([match.teamAId, match.teamBId]);
+      const me = players.find((p) => p.memberId === user.id);
+      if (!me) throw new ActionError("You're not playing in this match.");
+      if (match.extendedForTeamId === me.teamId) throw new AlreadyDone("Already marked — it's a makeup next week.");
+
+      const problem = outOfTownProblem(match, new Date(), regularSeasonEndsAt(seasonConfig(tournament)));
+      if (problem) throw new ActionError(problem);
+
+      const newDueBy = shiftDeadline(match.dueBy!, 1);
+      await tx
+        .update(schema.matches)
+        .set({ dueBy: newDueBy, extendedForTeamId: me.teamId, ...MAKEUP_RESET })
+        .where(eq(schema.matches.id, match.id));
+
+      const names = await tx
+        .select({ id: schema.tmTeams.id, name: schema.tmTeams.name })
+        .from(schema.tmTeams)
+        .where(inArray(schema.tmTeams.id, [match.teamAId, match.teamBId]));
+      const otherId = me.teamId === match.teamAId ? match.teamBId : match.teamAId;
+      mail = {
+        tournamentName: tournament.name,
+        requestingTeam: names.find((t) => t.id === me.teamId)?.name ?? "A team",
+        otherTeam: names.find((t) => t.id === otherId)?.name ?? "their opponent",
+        newDueBy,
+      };
+      notify = players.filter((p) => p.memberId !== user.id);
+    });
+  } catch (e) {
+    return fail(e);
+  }
+
+  if (mail) await sendMany(notify.map((p) => outOfTownEmail(p, mail!)));
+  refresh();
+  return { ok: true, message: "Done — it's now a makeup due next Saturday. Your opponents were emailed." };
+}
+
+const postTimeSchema = z.object({
+  matchId: z.uuid(),
+  when: z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/, "Pick a day and time."),
+  note: z.string().trim().max(80, "Keep the note short."),
+});
+
+/** "We're playing Thursday 7 PM, Court 3" — due Wednesday 11:59 PM each week. Any of the four players; posting again updates it. */
+export async function postMatchTime(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  const user = await requireMember();
+  const parsed = postTimeSchema.safeParse({
+    matchId: formData.get("matchId"),
+    when: String(formData.get("when") ?? ""),
+    note: String(formData.get("note") ?? ""),
+  });
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  // The input is Pacific wall-clock time — never `new Date(str)`.
+  const when = laInputToUtc(parsed.data.when);
+
+  try {
+    await withTransaction(async (tx) => {
+      const [match] = await tx.select().from(schema.matches).where(eq(schema.matches.id, parsed.data.matchId)).for("update");
+      if (!match || !match.teamAId || !match.teamBId) throw new ActionError("This match isn't set yet — the other team is still TBD.");
+      const players = await matchPlayers([match.teamAId, match.teamBId]);
+      if (!players.some((p) => p.memberId === user.id)) throw new ActionError("You're not playing in this match.");
+      const problem = postTimeProblem(match, when);
+      if (problem) throw new ActionError(problem);
+      await tx
+        .update(schema.matches)
+        .set({ scheduledAt: when, scheduledNote: parsed.data.note || null, scheduledBy: user.id })
+        .where(eq(schema.matches.id, match.id));
+    });
+  } catch (e) {
+    return fail(e);
+  }
+  refresh();
+  return { ok: true, message: "Match time posted." };
 }
 
 const disputeSchema = z.object({ matchId: z.uuid(), reason: z.string().trim().min(1, "Say what's wrong.").max(500) });

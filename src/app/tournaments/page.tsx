@@ -13,10 +13,11 @@ import { Reveal } from "@/components/ui/reveal";
 import { getSessionUser, type SessionUser } from "@/lib/session";
 import { isActiveMember } from "@/lib/access";
 import { db, schema } from "@/db";
-import { formatDeadline, formatEventWhen } from "@/lib/dates";
-import { computeStandings, type Standing } from "@/lib/standings";
-import { confirmedPoolMatches } from "@/lib/tournament";
+import { formatDeadline, formatEventDay, formatEventWhen, utcToLaInputValue } from "@/lib/dates";
 import { membershipsFor, spotsTakenByLeague, teamMembers } from "@/lib/league";
+import { loadLeagueView, resultText, type LeagueView } from "@/lib/league-view";
+import { outOfTownProblem, playoffRounds, regularSeasonEndsAt, scheduleBy, weekOf } from "@/lib/schedule";
+import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import {
   isRegistrationOpen,
   leagueCardState,
@@ -26,12 +27,12 @@ import {
   teamReadiness,
   type MembershipView,
 } from "@/lib/league-rules";
-import { club, leagueSteps } from "@/lib/content";
+import { club, leagueInfo, leagueSteps } from "@/lib/content";
 import { cn } from "@/lib/utils";
 import { RegisterForm } from "./register-form";
 import { InviteButtons } from "./invite-buttons";
 import { InvitePartnerForm, LeaveLeagueButton } from "./team-controls";
-import { ScoreReportForm, DisputeScoreButton } from "./score-form";
+import { ScoreReportForm, DisputeScoreButton, ConfirmScoreButton, OutOfTownButton, PostTimeForm } from "./score-form";
 
 export const metadata: Metadata = { title: "Tournaments" };
 
@@ -110,74 +111,73 @@ function SpotsChip({ league, taken, now }: { league: League; taken: number; now:
   );
 }
 
-function PoolTable({
-  pool,
-  standings,
-  names,
-  advancePerPool,
-  highlight,
-}: {
-  pool: string;
-  standings: Standing[];
-  names: Map<string, string>;
-  advancePerPool: number;
-  highlight?: string;
-}) {
+/** League-wide view of a live season — standings, this week's matchups, the full schedule, and the bracket. Any member can see it. */
+function LeagueLive({ league, view, highlight, now }: { league: League; view: LeagueView; highlight?: string; now: Date }) {
+  const current = view.season ? weekOf(view.season.seasonStartsOn, now) : 0;
+  const thisWeek = view.weeks.includes(current) ? current : null;
   return (
-    <div>
-      <p className="text-xs font-bold uppercase tracking-wide text-ink/50">Pool {pool}</p>
-      <ol className="mt-1 border-2 border-navy-900/10 bg-white">
-        {standings.map((s, i) => (
-          <li
-            key={s.teamId}
-            className={cn(
-              "flex items-center justify-between gap-3 border-b border-navy-900/5 p-3 text-sm last:border-b-0",
-              i === advancePerPool - 1 && standings.length > advancePerPool && "border-b-4 border-b-gold-500",
-            )}
-          >
-            <span className={s.teamId === highlight ? "font-bold text-navy-900" : "text-ink/70"}>
-              {s.rank}. {names.get(s.teamId) ?? "Team"}
-              {i < advancePerPool && (
-                <span className="ml-2 bg-gold-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-navy-900">Moves up</span>
-              )}
-            </span>
-            <span className="shrink-0 text-ink/50">
-              {s.wins}-{s.losses}
-            </span>
-          </li>
-        ))}
-      </ol>
+    <div className="space-y-6">
+      {view.knockout.length > 0 && (
+        <div>
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink/50">Playoffs</p>
+          <Bracket view={view} highlight={highlight} />
+        </div>
+      )}
+      <div>
+        <p className="mb-2 text-xs font-bold uppercase tracking-wide text-ink/50">Standings</p>
+        <StandingsTable view={view} playoffTeams={league.playoffTeams} highlight={highlight} />
+      </div>
+      {thisWeek && <WeekSchedule view={view} week={thisWeek} highlight={highlight} />}
+      <details>
+        <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-navy-800">Full schedule</summary>
+        <div className="mt-3 space-y-4">
+          {view.weeks.map((w) => (
+            <WeekSchedule key={w} view={view} week={w} highlight={highlight} />
+          ))}
+        </div>
+      </details>
     </div>
   );
 }
 
-/** Every pool of a live league — visible to any member, whether or not they're playing in it. */
-async function AllPools({ league, highlight }: { league: League; highlight?: string }) {
-  const teams = await db()
-    .select({ id: schema.tmTeams.id, name: schema.tmTeams.name, pool: schema.tmTeams.pool, status: schema.tmTeams.status })
-    .from(schema.tmTeams)
-    .where(eq(schema.tmTeams.tournamentId, league.id));
-  const confirmed = await confirmedPoolMatches(league.id);
-  const drawn = teams.filter((t) => t.pool && t.status !== "withdrawn");
-  const pools = [...new Set(drawn.map((t) => t.pool!))].sort();
-  const names = new Map(teams.map((t) => [t.id, t.name]));
-
-  if (pools.length === 0) return <p className="text-sm text-ink/50">No pools yet.</p>;
+/** "Week 3 of 7 · Top 8 make playoffs · Final Sat, Dec 12" */
+function SeasonLine({ season, now }: { season: NonNullable<LeagueView["season"]>; now: Date }) {
+  const week = weekOf(season.seasonStartsOn, now);
+  let final: Date | null = null;
+  try {
+    final = playoffRounds(season).at(-1)?.dueBy ?? null;
+  } catch {
+    final = null;
+  }
+  const phase =
+    week < 1
+      ? "Week 1 starts Monday"
+      : week <= season.roundRobinWeeks
+        ? `Week ${week} of ${season.roundRobinWeeks}`
+        : week <= season.roundRobinWeeks + season.catchupWeeks
+          ? "Catch-up week — makeups only"
+          : "Playoffs";
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {pools.map((pool) => (
-        <PoolTable
-          key={pool}
-          pool={pool}
-          names={names}
-          advancePerPool={league.advancePerPool}
-          highlight={highlight}
-          standings={computeStandings(
-            drawn.filter((t) => t.pool === pool).map((t) => t.id),
-            confirmed.filter((m) => m.pool === pool),
-          )}
-        />
-      ))}
+    <p className="mt-1 text-xs font-semibold text-navy-900">
+      {phase} · Top {season.playoffTeams} make playoffs{final ? ` · Final ${formatEventDay(final)}` : ""}
+    </p>
+  );
+}
+
+function SeasonRules() {
+  return (
+    <div className="space-y-1.5 border-l-4 border-navy-900/15 pl-4 text-xs leading-relaxed text-ink/60">
+      <p>{leagueInfo.weekRule}</p>
+      <p>
+        {leagueInfo.courtBookingNote}{" "}
+        <a href={leagueInfo.courtBookingUrl} target="_blank" rel="noreferrer" className="font-semibold text-navy-800 underline">
+          Book a court
+        </a>
+        .
+      </p>
+      <p>{leagueInfo.scoreRule}</p>
+      <p>{leagueInfo.outOfTownRule}</p>
+      <p>{leagueInfo.noShowRule}</p>
     </div>
   );
 }
@@ -252,12 +252,14 @@ async function MyTeam({
   phase,
   user,
   now,
+  view,
 }: {
   league: League;
   teamId: string;
   phase: "registration" | "drafting" | "live" | "not_drawn";
   user: SessionUser;
   now: Date;
+  view: LeagueView | null;
 }) {
   const [team] = await db().select().from(schema.tmTeams).where(eq(schema.tmTeams.id, teamId));
   if (!team) return null;
@@ -285,8 +287,7 @@ async function MyTeam({
     <div className="mt-4 space-y-4">
       <div className="border-l-4 border-gold-500 bg-chalk p-4">
         <p className="text-sm text-navy-900">
-          You&apos;re in as <strong>{team.name}</strong>
-          {team.pool && phase === "live" ? `, Pool ${team.pool}` : ""}.
+          You&apos;re in as <strong>{team.name}</strong>.
         </p>
         <p className="mt-1 text-sm text-ink/70">{partnerLine}</p>
       </div>
@@ -301,65 +302,110 @@ async function MyTeam({
 
       {phase === "drafting" && (
         <p className="text-sm text-ink/70">
-          Registration&apos;s closed and exec is setting the pools. You&apos;ll get an email with your opponents
-          when they&apos;re published.
+          Registration&apos;s closed and exec is building the schedule. You&apos;ll get an email with your
+          week-by-week opponents when it&apos;s published.
           {readiness !== "ready" && " Your team doesn't have two confirmed players yet, so it may sit out — message exec."}
         </p>
       )}
 
       {phase === "not_drawn" && (
         <p className="text-sm text-ink/70">
-          Your team wasn&apos;t in the draw — it didn&apos;t have two confirmed players when pools were made. Reach out to
+          Your team isn&apos;t on the schedule yet — exec will slot you in if there&apos;s an open spot. Reach out to
           exec at <a href={`mailto:${club.email}`} className="font-semibold underline">{club.email}</a>.
         </p>
       )}
 
-      {phase === "live" && team.pool && <LiveMatches league={league} teamId={team.id} pool={team.pool} />}
+      {phase === "live" && team.pool && view && <TeamSchedule view={view} teamId={team.id} now={now} />}
     </div>
   );
 }
 
-async function LiveMatches({ league, teamId, pool }: { league: League; teamId: string; pool: string }) {
-  const poolTeams = await db()
-    .select({ id: schema.tmTeams.id, name: schema.tmTeams.name })
-    .from(schema.tmTeams)
-    .where(and(eq(schema.tmTeams.tournamentId, league.id), eq(schema.tmTeams.pool, pool)));
-  const names = new Map(poolTeams.map((t) => [t.id, t.name]));
-  const matches = await db()
-    .select()
-    .from(schema.matches)
-    .where(and(eq(schema.matches.tournamentId, league.id), eq(schema.matches.pool, pool)));
-  const mine = matches.filter((m) => m.teamAId === teamId || m.teamBId === teamId);
-  const name = (id: string | null) => (id ? (names.get(id) ?? "Withdrawn team") : "TBD");
-
-  const STATUS: Record<string, string> = {
-    pending: "Not played yet",
-    reported: "Score reported — confirms automatically unless disputed",
-    confirmed: "Final",
-    disputed: "Disputed — waiting on an admin",
-    forfeited: "Forfeited",
-  };
+/** Your team's season, one card per match: who, when, contact, and the buttons for this week. */
+function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string; now: Date }) {
+  const mine = [...view.pool, ...view.knockout]
+    .filter((m) => m.teamAId === teamId || m.teamBId === teamId)
+    .sort((a, b) => (a.dueBy?.getTime() ?? 0) - (b.dueBy?.getTime() ?? 0));
+  const myPlayers = new Set(view.players(teamId).map((p) => p.memberId));
+  const upNext = mine.find((m) => m.status === "pending" && !view.isBye(m) && m.dueBy && m.dueBy >= now);
+  const seasonEnd = view.season ? regularSeasonEndsAt(view.season) : null;
 
   return (
     <div className="space-y-3">
       <p className="text-xs font-bold uppercase tracking-wide text-ink/50">Your matches</p>
-      {mine.length === 0 && <p className="text-sm text-ink/50">No matches in your pool.</p>}
-      {mine.map((m) => (
-        <div key={m.id} className="border-2 border-navy-900/10 bg-white p-3">
-          <p className="text-sm font-semibold text-navy-900">vs {name(m.teamAId === teamId ? m.teamBId : m.teamAId)}</p>
-          <p className="mt-0.5 text-xs text-ink/50">{STATUS[m.status] ?? m.status}</p>
-          {m.status === "pending" && (
-            <div className="mt-2">
-              <ScoreReportForm matchId={m.id} teamAName={name(m.teamAId)} teamBName={name(m.teamBId)} />
-            </div>
-          )}
-          {m.status === "reported" && (
-            <div className="mt-2">
-              <DisputeScoreButton matchId={m.id} />
-            </div>
-          )}
-        </div>
-      ))}
+      {mine.length === 0 && <p className="text-sm text-ink/50">No matches yet.</p>}
+      {mine.map((m) => {
+        const oppId = m.teamAId === teamId ? m.teamBId : m.teamAId;
+        const bye = view.isBye(m);
+        const report = view.reportByMatch.get(m.id);
+        const reportedByUs = Boolean(report?.reportedBy && myPlayers.has(report.reportedBy));
+        const known = Boolean(m.teamAId && m.teamBId);
+        const awayOk = seasonEnd && !bye && known && outOfTownProblem(m, now, seasonEnd) === null;
+        const opponents = oppId && !bye ? view.players(oppId) : [];
+
+        return (
+          <div
+            key={m.id}
+            className={cn("border-2 bg-white p-3", m.id === upNext?.id ? "border-gold-500" : "border-navy-900/10", m.dueBy && m.dueBy < now && m.status !== "pending" && "opacity-75")}
+          >
+            <p className="flex flex-wrap items-center gap-x-2 text-[11px] font-bold uppercase tracking-wide text-ink/45">
+              {view.label(m)}
+              {m.id === upNext?.id && <span className="bg-gold-500 px-1.5 py-0.5 text-navy-900">Up next</span>}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-navy-900">{bye ? "Bye — no match this week" : `vs ${view.name(oppId)}`}</p>
+            {opponents.length > 0 && (
+              <p className="mt-0.5 text-xs text-ink/55">
+                {opponents.map((p, i) => (
+                  <span key={p.memberId}>
+                    {i > 0 && " & "}
+                    {p.name ?? p.email}{" "}
+                    <a href={`mailto:${p.email}`} className="text-navy-800 underline">
+                      {p.email}
+                    </a>
+                  </span>
+                ))}
+              </p>
+            )}
+            {!bye && m.status !== "pending" && <p className="mt-1 text-xs text-ink/50">{resultText(view, m, teamId)}</p>}
+            {!bye && m.status === "pending" && m.dueBy && known && (
+              <p className="mt-1 text-xs text-ink/55">
+                {m.scheduledAt ? (
+                  <>
+                    <Check size={12} className="mr-1 inline text-gold-500" />
+                    Playing <strong className="text-navy-900">{formatDeadline(m.scheduledAt)}</strong>
+                    {m.scheduledNote ? ` · ${m.scheduledNote}` : ""}
+                  </>
+                ) : (
+                  <span className={now > scheduleBy(m.dueBy) ? "font-semibold text-red-700" : undefined}>
+                    No time posted — due {formatDeadline(scheduleBy(m.dueBy))}
+                  </span>
+                )}
+                {` · report by ${formatDeadline(m.dueBy)}`}
+              </p>
+            )}
+
+            {m.status === "pending" && !bye && known && (
+              <div className="mt-2 flex flex-wrap items-center gap-4">
+                <PostTimeForm
+                  matchId={m.id}
+                  current={m.scheduledAt ? utcToLaInputValue(m.scheduledAt) : null}
+                  currentNote={m.scheduledNote}
+                />
+                <ScoreReportForm matchId={m.id} teamAName={view.name(m.teamAId)} teamBName={view.name(m.teamBId)} />
+                {awayOk && <OutOfTownButton matchId={m.id} />}
+              </div>
+            )}
+            {m.status === "reported" &&
+              (reportedByUs ? (
+                <p className="mt-2 text-xs text-ink/55">Waiting for {view.name(oppId)} to confirm — it confirms automatically unless they dispute it.</p>
+              ) : (
+                <div className="mt-2 flex flex-wrap items-center gap-4">
+                  <ConfirmScoreButton matchId={m.id} />
+                  <DisputeScoreButton matchId={m.id} />
+                </div>
+              ))}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -406,6 +452,8 @@ async function LeagueCard({
 }) {
   const state = leagueCardState({ league, memberships, isComp: user.onCompetitiveTeam, spotsTaken: taken, now });
   const live = Boolean(league.poolsAnnouncedAt);
+  const view = live ? await loadLeagueView(league) : null;
+  const highlight = state.kind === "on_team" ? state.teamId : undefined;
 
   return (
     <div id={`league-${league.id}`} className="scroll-mt-24 border-2 border-navy-900/10 bg-white p-6">
@@ -417,9 +465,10 @@ async function LeagueCard({
         </span>
       </div>
       <LeagueMeta league={league} taken={taken} now={now} />
+      {live && view?.season && <SeasonLine season={view.season} now={now} />}
 
       {state.kind === "on_team" && (
-        <MyTeam league={league} teamId={state.teamId} phase={state.phase} user={user} now={now} />
+        <MyTeam league={league} teamId={state.teamId} phase={state.phase} user={user} now={now} view={view} />
       )}
       {state.kind === "invited" && <Invites teamIds={state.teamIds} />}
       {state.kind === "committed_elsewhere" && (
@@ -449,20 +498,28 @@ async function LeagueCard({
             <span className="hidden group-open:inline">Hide sign-ups</span>
           </summary>
           <div className="mt-3">
-            <SignupList league={league} highlight={state.kind === "on_team" ? state.teamId : undefined} />
+            <SignupList league={league} highlight={highlight} />
           </div>
         </details>
       )}
 
-      {live && (
-        <details className="mt-5" open={state.kind !== "on_team"}>
-          <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-navy-800">
-            All pools &amp; standings
-          </summary>
-          <div className="mt-3">
-            <AllPools league={league} highlight={state.kind === "on_team" ? state.teamId : undefined} />
-          </div>
-        </details>
+      {live && view && (
+        <>
+          <details className="mt-5" open={state.kind !== "on_team"}>
+            <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-navy-800">
+              Standings, schedule &amp; bracket
+            </summary>
+            <div className="mt-3">
+              <LeagueLive league={league} view={view} highlight={highlight} now={now} />
+            </div>
+          </details>
+          <details className="mt-4">
+            <summary className="cursor-pointer text-xs font-bold uppercase tracking-wide text-navy-800">League rules</summary>
+            <div className="mt-3">
+              <SeasonRules />
+            </div>
+          </details>
+        </>
       )}
     </div>
   );
@@ -619,7 +676,7 @@ async function PublicTournamentsView({ user }: { user: SessionUser | null }) {
           <TournamentCards />
         </Section>
 
-        <Section kicker="Pickleball League" title="How it works" lead="Pool play on your own schedule — around your classes, not ours.">
+        <Section kicker="Pickleball League" title="How it works" lead="One match a week on your own schedule — around your classes, not ours.">
           <div className="mt-14">
             <HowItWorks tone="public" />
           </div>

@@ -152,10 +152,9 @@ Super Administrator and remove yourself later — no redeploy needed.
 - **Pickleball League** (registration with player caps, partner invites,
   free-agent pairing, pool draws, score reporting/disputes, weekly nudges) is
   built and live — see `npx wrangler secret put CRON_SECRET`
-  above and the `event-reminders.yml` / `weekly-nudges.yml` GitHub Actions
-  workflows, which also drive the tournament auto-confirm and weekly nudge
-  crons now (not just event reminders).
-- **Knockout bracket** (seeded single-elimination after pool play) isn't
-  built — pool play currently ends in a ranked standings table, not an
-  elimination bracket. Also not built: a **visual interactive bracket UI** —
-  standings/results render as plain tables today.
+  above and the hourly `event-reminders.yml` GitHub Actions workflow, which
+  also calls `/api/cron/league` — the league clock (auto-confirm scores,
+  settle unreported matches Monday morning, Monday matchup emails, Thursday
+  "no score yet" reminders).
+- **Playoff bracket** (seeded single elimination after the round robin) is
+  built: exec seeds it from the standings, winners advance automatically.

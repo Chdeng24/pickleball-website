@@ -12,9 +12,12 @@ export type LeagueDefaults = {
   eligibility: "all" | "competitive_only";
   location: string | null;
   maxPlayers: number | null;
-  poolSize: number;
-  advancePerPool: number;
   autoconfirmHours: number;
+  seasonStartsOn: string | null;
+  roundRobinWeeks: number;
+  catchupWeeks: number;
+  playoffTeams: number;
+  finalOn: string | null;
   /** Already converted to a Pacific datetime-local value ("YYYY-MM-DDTHH:mm"). */
   registrationClosesAtInput: string;
 };
@@ -104,21 +107,43 @@ export function LeagueForm({ defaults }: { defaults?: LeagueDefaults }) {
         />
       </div>
 
-      <div>
-        <label className={label}>Teams per pool</label>
-        <input type="number" name="poolSize" min={3} max={16} defaultValue={defaults?.poolSize ?? 8} className={input} />
+      <div className="sm:col-span-2 border-t-2 border-navy-900/10 pt-5">
+        <p className="font-display text-xs font-bold uppercase tracking-wide text-navy-900">Season</p>
+        <p className="mt-1 text-xs text-ink/50">
+          One match a week (Mon–Sun) for the round-robin weeks, then catch-up weeks with no new matches (makeups only),
+          then single elimination one round a week, ending in the final.
+        </p>
       </div>
 
       <div>
-        <label className={label}>Teams that move up per pool</label>
-        <input
-          type="number"
-          name="advancePerPool"
-          min={1}
-          max={8}
-          defaultValue={defaults?.advancePerPool ?? 2}
-          className={input}
-        />
+        <label className={label}>Week 1 starts (a Monday)</label>
+        <input type="date" name="seasonStartsOn" defaultValue={defaults?.seasonStartsOn ?? ""} className={input} />
+      </div>
+
+      <div>
+        <label className={label}>Final (date)</label>
+        <input type="date" name="finalOn" defaultValue={defaults?.finalOn ?? ""} className={input} />
+      </div>
+
+      <div>
+        <label className={label}>Round-robin weeks (matches per team)</label>
+        <input type="number" name="roundRobinWeeks" min={1} max={15} defaultValue={defaults?.roundRobinWeeks ?? 7} className={input} />
+      </div>
+
+      <div>
+        <label className={label}>Catch-up weeks before playoffs</label>
+        <input type="number" name="catchupWeeks" min={0} max={3} defaultValue={defaults?.catchupWeeks ?? 1} className={input} />
+      </div>
+
+      <div>
+        <label className={label}>Playoff teams</label>
+        <select name="playoffTeams" defaultValue={defaults?.playoffTeams ?? 8} className={input}>
+          {[2, 4, 8, 16].map((n) => (
+            <option key={n} value={n}>
+              Top {n}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div>
