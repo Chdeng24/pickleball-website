@@ -277,6 +277,8 @@ async function MyTeam({
       <>Waiting on <strong>{partnerLabel}</strong> to accept your invite.</>
     ) : partner?.inviteStatus === "declined" ? (
       <><strong>{partnerLabel}</strong> declined — invite someone else.</>
+    ) : phase === "live" ? (
+      <>Playing solo.</>
     ) : (
       <>No partner yet — invite one, or exec will pair you with another solo player before the draw.</>
     );

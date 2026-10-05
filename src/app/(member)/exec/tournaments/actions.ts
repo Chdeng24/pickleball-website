@@ -35,7 +35,7 @@ const FRIENDLY: Record<string, string> = {
   no_draft_draw: "Generate the draft draw first.",
   not_open: "This league has ended.",
   too_few_teams: "Need at least 2 complete teams (two confirmed players each) to make a draw.",
-  incomplete_team: "Only teams with two confirmed players can be scheduled.",
+  incomplete_team: "That team still has an unanswered invite — it can't be scheduled until it's settled.",
   no_season: "Set the season start date and final date in Settings first.",
   season_started: "Week 1 would already be over — move the season start date in Settings.",
   same_team: "Pick a different team.",

@@ -214,6 +214,21 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
+    "a one-player team (playing solo by choice) can take an open slot; one with a pending invite can't",
+    async (tx) => {
+      const league = await makeLeague(tx, { registrationClosesAt: new Date(Date.now() + 3_600_000) });
+      await makeTeams(tx, league.id, 9);
+      const [solo, inviter, invitee] = [await makeUser(tx), await makeUser(tx), await makeUser(tx)];
+      const { teamId: soloTeam } = await registerForLeagueTx(tx, { tournamentId: league.id, userId: solo.id });
+      const { teamId: waiting } = await registerForLeagueTx(tx, { tournamentId: league.id, userId: inviter.id, partnerEmail: invitee.email });
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 }); // neither is a full team, so neither is drawn
+      const [slot] = await placeholders(tx, league.id);
+      await rejects(sp(tx, (t) => fillOpenSlotTx(t, slot.id, waiting)), TournamentError, /incomplete_team/);
+      const r = await fillOpenSlotTx(tx, slot.id, soloTeam);
+      assert.equal(r.moved, 7);
+    },
+  ],
+  [
     "withdrawal mid-season: remaining matches become an open slot; an overdue unplayed one is the opponent's forfeit win",
     async (tx) => {
       const league = await makeLeague(tx);

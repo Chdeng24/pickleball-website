@@ -124,6 +124,17 @@ export function isDrawReady(members: Pick<TeamMemberView, "inviteStatus">[]): bo
   return accepted === 2 && pending === 0;
 }
 
+/**
+ * Exec can hand-place a team that's one player by choice (someone playing
+ * solo against doubles teams) — but never one with an invite still hanging.
+ * The automatic draw still only takes full teams (isDrawReady).
+ */
+export function isSchedulable(members: Pick<TeamMemberView, "inviteStatus">[]): boolean {
+  const accepted = members.filter((m) => m.inviteStatus === "accepted").length;
+  const pending = members.filter((m) => m.inviteStatus === "pending").length;
+  return (accepted === 1 || accepted === 2) && pending === 0;
+}
+
 export type Readiness = "ready" | "waiting_on_partner" | "needs_partner";
 
 export function teamReadiness(members: Pick<TeamMemberView, "inviteStatus">[]): Readiness {

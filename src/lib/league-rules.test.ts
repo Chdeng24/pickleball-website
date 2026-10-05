@@ -16,6 +16,7 @@ import {
   spotsLeft,
   teamReadiness,
   type MembershipView,
+  isSchedulable,
 } from "./league-rules.ts";
 
 const now = new Date("2026-09-20T18:00:00Z");
@@ -257,4 +258,12 @@ test("phases after registration: drafting, live, and not drawn", () => {
   assert.equal((card({ league: drafting, memberships: [inPool] }) as { phase: string }).phase, "drafting");
   assert.equal((card({ league: live, memberships: [inPool] }) as { phase: string }).phase, "live");
   assert.equal((card({ league: live, memberships: [noPool] }) as { phase: string }).phase, "not_drawn");
+});
+
+test("isSchedulable: exec can place a full team or a one-player team, never one with an open invite", () => {
+  assert.equal(isSchedulable([{ inviteStatus: "accepted" }, { inviteStatus: "accepted" }]), true);
+  assert.equal(isSchedulable([{ inviteStatus: "accepted" }]), true);
+  assert.equal(isSchedulable([{ inviteStatus: "accepted" }, { inviteStatus: "declined" }]), true);
+  assert.equal(isSchedulable([{ inviteStatus: "accepted" }, { inviteStatus: "pending" }]), false);
+  assert.equal(isSchedulable([]), false);
 });

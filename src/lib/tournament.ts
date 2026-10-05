@@ -2,7 +2,7 @@ import "server-only";
 import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { withTransaction, type Tx } from "@/db/pool";
-import { isDrawReady } from "@/lib/league-rules";
+import { isDrawReady, isSchedulable } from "@/lib/league-rules";
 import { checkMatchScore, type GameScore } from "@/lib/matchscore";
 import {
   balancedSlotOrder,
@@ -289,7 +289,7 @@ export async function swapTeamsTx(tx: Tx, teamAId: string, teamBId: string): Pro
 
   for (const t of [a, b]) {
     if (t.status === "withdrawn") throw new TournamentError("not_found");
-    if (!t.isPlaceholder && !isDrawReady(await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, t.id)))) {
+    if (!t.isPlaceholder && !isSchedulable(await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, t.id)))) {
       throw new TournamentError("incomplete_team");
     }
   }
@@ -330,7 +330,7 @@ export async function fillOpenSlotTx(tx: Tx, placeholderId: string, teamId: stri
   if (tournament.status !== "pools") throw new TournamentError("not_in_season");
   if (team.pool) throw new TournamentError("already_scheduled");
   const roster = await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, team.id));
-  if (!isDrawReady(roster)) throw new TournamentError("incomplete_team");
+  if (!isSchedulable(roster)) throw new TournamentError("incomplete_team");
 
   // "This week on" = any match whose deadline hasn't passed yet.
   const moved = await repointMatches(tx, tournament.id, slot.id, team.id, tournament.poolsAnnouncedAt ? now : null);

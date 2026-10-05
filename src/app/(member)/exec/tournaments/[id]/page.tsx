@@ -93,6 +93,10 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
   const scheduled = activeTeams.filter((t) => t.pool);
   const unscheduled = activeTeams.filter((t) => !t.pool);
   const unscheduledReady = unscheduled.filter((t) => t.readiness === "ready");
+  // Exec can also hand-place a one-player team (someone playing solo by choice).
+  const placeable = unscheduled
+    .filter((t) => t.readiness !== "waiting_on_partner")
+    .map((t) => ({ id: t.id, label: t.readiness === "ready" ? t.name : `${t.name} (solo — plays alone)` }));
   const readyCount = activeTeams.filter((t) => t.readiness === "ready").length;
   const stillOpenByDate = league.registrationClosesAt && league.registrationClosesAt > now;
 
@@ -153,7 +157,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
   const swapOptions = (teamId: string) => [
     ...scheduled.filter((t) => t.id !== teamId).map((t) => ({ id: t.id, label: t.name })),
     ...openSlots.map((t) => ({ id: t.id, label: `${t.name} (empty)` })),
-    ...unscheduledReady.map((t) => ({ id: t.id, label: `${t.name} (not scheduled — replaces)` })),
+    ...placeable.map((t) => ({ id: t.id, label: `${t.label} (not scheduled — replaces)` })),
   ];
   const bracketTeams = view.knockout.length
     ? [...new Set(view.knockout.filter((m) => m.round === 1).flatMap((m) => [m.teamAId, m.teamBId]))].filter((x): x is string => Boolean(x))
@@ -429,7 +433,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                       <p className="text-sm font-semibold text-navy-900">{t.name}</p>
                       <p className="text-xs text-ink/55">Empty — opponents have a bye. A late team can take it over from this week on.</p>
                     </div>
-                    <FillSlotForm placeholderId={t.id} options={unscheduledReady.map((u) => ({ id: u.id, label: u.name }))} />
+                    <FillSlotForm placeholderId={t.id} options={placeable} />
                   </li>
                 ))}
                 {scheduled.map((t) => (
@@ -469,7 +473,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                       <p className="text-xs text-ink/50">{who(t.roster)}</p>
                     </div>
                     <div className="flex flex-wrap items-center gap-3">
-                      {isDraft && t.readiness === "ready" && <SwapSelect teamId={t.id} label="Replace…" options={scheduled.map((s) => ({ id: s.id, label: s.name }))} />}
+                      {isDraft && t.readiness !== "waiting_on_partner" && <SwapSelect teamId={t.id} label="Replace…" options={scheduled.map((s) => ({ id: s.id, label: s.name }))} />}
                       {isDraft && soloTeams.some((s) => s.id === t.id) && <PairTeamForm teamId={t.id} options={pairOptions(t.id)} />}
                       <WithdrawTeamButton teamId={t.id} scheduled={false} />
                     </div>
