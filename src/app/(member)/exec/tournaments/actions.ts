@@ -16,13 +16,13 @@ import {
   generatePlayoffs,
   publishDraw,
   seasonConfig,
-  settleMatchTx,
   swapTeams,
   TournamentError,
   withdrawTeam,
   type ExecOutcome,
 } from "@/lib/tournament";
 import { execAddTeam, LeagueError, pairFreeAgents, randomPairFreeAgents } from "@/lib/league";
+import { resolveDisputeTx } from "@/lib/match-actions";
 import { laDeadlineToUtc } from "@/lib/dates";
 import { scheduleAnnouncedEmail, sendLateTeamSchedule, sendMany, type MatchLine } from "@/lib/email";
 import { matchLabel, playoffRounds } from "@/lib/schedule";
@@ -486,18 +486,7 @@ export async function resolveDispute(_prev: ActionResult, formData: FormData): P
   if (!parsed.success) return { ok: false, error: "Invalid input." };
 
   try {
-    const found = await withTransaction(async (tx) => {
-      const [report] = await tx.select().from(schema.matchReports).where(eq(schema.matchReports.id, parsed.data.reportId));
-      if (!report) return false;
-      const [match] = await tx.select().from(schema.matches).where(eq(schema.matches.id, report.matchId)).for("update");
-      if (!match || (parsed.data.winnerTeamId !== match.teamAId && parsed.data.winnerTeamId !== match.teamBId)) return false;
-      await tx
-        .update(schema.matchReports)
-        .set({ confirmedAt: new Date(), winnerTeamId: parsed.data.winnerTeamId })
-        .where(eq(schema.matchReports.id, report.id));
-      await settleMatchTx(tx, match, "confirmed", parsed.data.winnerTeamId);
-      return true;
-    });
+    const found = await withTransaction((tx) => resolveDisputeTx(tx, parsed.data));
     if (!found) return { ok: false, error: "That report no longer exists." };
   } catch (e) {
     return fail(e);

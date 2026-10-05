@@ -7,7 +7,8 @@
  * transaction that is always rolled back, on a throwaway league and users.
  * Real leagues are never read, locked, or changed.
  *
- * Covers: the weekly draw (one match per team per week, no repeats, open
+ * Covers: every player button (post time, report, confirm, dispute,
+ * can't-make-it) and the admin dispute ruling, a full season end to end, the weekly draw (one match per team per week, no repeats, open
  * slots), swapping teams, a late team taking an open slot mid-season without
  * moving anyone else, withdrawals, random free-agent pairing, exec-added
  * teams, the playoff bracket advancing winners, and the hourly league clock
@@ -20,7 +21,23 @@ import { drizzle } from "drizzle-orm/neon-serverless";
 import { and, eq } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import type { Tx } from "../src/db/pool";
-import { execAddTeamTx, LeagueError, randomPairFreeAgentsTx, registerForLeagueTx } from "../src/lib/league";
+import {
+  AlreadyDone,
+  execAddTeamTx,
+  LeagueError,
+  pairFreeAgentsTx,
+  randomPairFreeAgentsTx,
+  registerForLeagueTx,
+  respondToInviteTx,
+} from "../src/lib/league";
+import {
+  confirmScoreTx,
+  disputeScoreTx,
+  markOutOfTownTx,
+  postMatchTimeTx,
+  reportScoreTx,
+  resolveDisputeTx,
+} from "../src/lib/match-actions";
 import {
   execSetResultTx,
   fillOpenSlotTx,
@@ -31,7 +48,7 @@ import {
   TournamentError,
   withdrawTeamTx,
 } from "../src/lib/tournament";
-import { addDays, shiftDeadline, weekDueBy } from "../src/lib/schedule";
+import { addDays, scheduleBy, shiftDeadline, weekDueBy } from "../src/lib/schedule";
 import { leagueTickTx } from "../src/lib/social-league";
 
 if (!process.env.DATABASE_URL) {
@@ -115,7 +132,7 @@ function sp<T>(tx: Tx, fn: (tx: Tx) => Promise<T>): Promise<T> {
   return tx.transaction(fn) as Promise<T>;
 }
 
-async function rejects(p: Promise<unknown>, kind: typeof TournamentError | typeof LeagueError, pattern?: RegExp) {
+async function rejects(p: Promise<unknown>, kind: typeof TournamentError | typeof LeagueError | typeof AlreadyDone, pattern?: RegExp) {
   try {
     await p;
   } catch (e) {
@@ -387,6 +404,147 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       const [a2] = await tx.select().from(schema.matches).where(eq(schema.matches.id, away.id));
       assert.deepEqual([a2.status, a2.winnerTeamId], ["forfeited", away.teamBId]);
       assert.equal(r2.outbox.length, 0, "settling sends no email");
+    },
+  ],
+  [
+    "player buttons: post time, report, confirm, dispute, admin ruling, can't-make-it — with every guard",
+    async (tx) => {
+      const league = await makeLeague(tx);
+      await makeTeams(tx, league.id, 8);
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      const [m1, m2, m3] = (await poolMatches(tx, league.id)).filter((m) => m.round === 1);
+      const roster = async (teamId: string) =>
+        (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teamId))).map((r) => r.memberId);
+      const [a1, a2] = await roster(m1.teamAId!);
+      const [b1] = await roster(m1.teamBId!);
+      const outsider = (await roster(m2.teamAId!))[0];
+      const due = weekDueBy(START, 1);
+      const tue = new Date(due.getTime() - 4 * 86_400_000);
+
+      // Nothing works until the schedule is published.
+      await rejects(sp(tx, (t) => postMatchTimeTx(t, { userId: a1, matchId: m1.id, when: tue, note: "" })), LeagueError, /isn't being played/);
+      await publishDrawTx(tx, league.id);
+
+      // Post a time: players only, before the deadline; posting again updates it.
+      await rejects(sp(tx, (t) => postMatchTimeTx(t, { userId: outsider, matchId: m1.id, when: tue, note: "" })), LeagueError, /not playing/);
+      await rejects(sp(tx, (t) => postMatchTimeTx(t, { userId: a1, matchId: m1.id, when: new Date(due.getTime() + 3_600_000), note: "" })), LeagueError, /after the deadline/);
+      await postMatchTimeTx(tx, { userId: a1, matchId: m1.id, when: tue, note: "Court 3" });
+      await postMatchTimeTx(tx, { userId: b1, matchId: m1.id, when: new Date(tue.getTime() + 3_600_000), note: "Court 4" });
+      let [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m1.id));
+      assert.equal(row.scheduledNote, "Court 4");
+      assert.ok(row.scheduledAt! < scheduleBy(due), "posted before the Wednesday cut-off");
+
+      // Report: valid scores only, once; own team can't confirm or dispute; the other team confirms.
+      await rejects(sp(tx, (t) => reportScoreTx(t, { userId: a1, matchId: m1.id, games: [[11, 10], [11, 5]] })), LeagueError, /win by|at least 2/i);
+      await rejects(sp(tx, (t) => reportScoreTx(t, { userId: outsider, matchId: m1.id, games: [[11, 5], [11, 5]] })), LeagueError, /not playing/);
+      const rep = await reportScoreTx(tx, { userId: a1, matchId: m1.id, games: [[11, 5], [9, 11], [11, 7]] });
+      assert.equal(rep.notify.length, 3, "the other three players are emailed");
+      await rejects(sp(tx, (t) => reportScoreTx(t, { userId: b1, matchId: m1.id, games: [[5, 11], [5, 11]] })), LeagueError, /already has a result/);
+      await rejects(sp(tx, (t) => confirmScoreTx(t, { userId: a2, matchId: m1.id })), LeagueError, /other team has to confirm/);
+      await rejects(sp(tx, (t) => disputeScoreTx(t, { userId: a2, matchId: m1.id, reason: "x" })), LeagueError, /own team/);
+      await confirmScoreTx(tx, { userId: b1, matchId: m1.id });
+      [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m1.id));
+      assert.deepEqual([row.status, row.winnerTeamId], ["confirmed", m1.teamAId]);
+      await rejects(sp(tx, (t) => confirmScoreTx(t, { userId: b1, matchId: m1.id })), AlreadyDone);
+
+      // Dispute → admin ruling picks the winner.
+      const [c1] = await roster(m2.teamAId!);
+      const [d1] = await roster(m2.teamBId!);
+      await reportScoreTx(tx, { userId: c1, matchId: m2.id, games: [[11, 2], [11, 2]] });
+      await disputeScoreTx(tx, { userId: d1, matchId: m2.id, reason: "We won game 2" });
+      [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m2.id));
+      assert.equal(row.status, "disputed");
+      await rejects(sp(tx, (t) => confirmScoreTx(t, { userId: d1, matchId: m2.id })), LeagueError);
+      const [report] = await tx.select().from(schema.matchReports).where(eq(schema.matchReports.matchId, m2.id));
+      assert.equal(await resolveDisputeTx(tx, { reportId: report.id, winnerTeamId: m2.teamBId! }), true);
+      [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m2.id));
+      assert.deepEqual([row.status, row.winnerTeamId], ["confirmed", m2.teamBId]);
+
+      // Can't make it: pushes a week, clears the posted time, once per match, either team only once.
+      const [e1] = await roster(m3.teamAId!);
+      const [f1] = await roster(m3.teamBId!);
+      await postMatchTimeTx(tx, { userId: e1, matchId: m3.id, when: tue, note: "" });
+      const { notify, mail } = await markOutOfTownTx(tx, { userId: e1, matchId: m3.id, now: tue });
+      assert.equal(notify.length, 3);
+      assert.equal(mail.newDueBy.getTime(), weekDueBy(START, 2).getTime());
+      [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m3.id));
+      assert.deepEqual([row.extendedForTeamId, row.scheduledAt], [m3.teamAId, null]);
+      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: e1, matchId: m3.id, now: tue })), AlreadyDone);
+      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: f1, matchId: m3.id, now: tue })), LeagueError, /only be pushed back once/);
+    },
+  ],
+  [
+    "full season end to end: sign-ups → pairing → draw → late team → 8 weeks → clock → playoffs → champion",
+    async (tx) => {
+      // 1. Sign-ups: 9 pairs, one invite accepted, 4 free agents, and a closed deadline.
+      const league = await makeLeague(tx, { registrationClosesAt: new Date(Date.now() + 3_600_000), roundRobinWeeks: 8, catchupWeeks: 0 });
+      await makeTeams(tx, league.id, 8);
+      const [cap, mate] = [await makeUser(tx), await makeUser(tx)];
+      const invited = await registerForLeagueTx(tx, { tournamentId: league.id, userId: cap.id, partnerEmail: mate.email });
+      await respondToInviteTx(tx, { teamId: invited.teamId, userId: mate.id, accept: true });
+      const fas = [await makeUser(tx), await makeUser(tx), await makeUser(tx), await makeUser(tx)];
+      const faTeams = [];
+      for (const u of fas) faTeams.push((await registerForLeagueTx(tx, { tournamentId: league.id, userId: u.id })).teamId);
+      await tx.update(schema.tournaments).set({ registrationClosesAt: new Date(Date.now() - 1000) }).where(eq(schema.tournaments.id, league.id));
+
+      // 2. Exec hand-pairs two, random-pairs the rest → 11 teams.
+      await pairFreeAgentsTx(tx, { teamAId: faTeams[0], teamBId: faTeams[1] });
+      const random = await randomPairFreeAgentsTx(tx, { tournamentId: league.id });
+      assert.deepEqual([random.pairs.length, random.leftover], [1, null]);
+
+      // 3. Draw: 11 teams → 1 open slot; 8 weeks.
+      const draw = await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      assert.deepEqual(draw, { teamCount: 11, openSlots: 1, weeks: 8 });
+      await publishDrawTx(tx, league.id);
+
+      // 4. Late team added and slotted before week 1 → no byes all season.
+      const [l1, l2] = [await makeUser(tx), await makeUser(tx)];
+      const late = await execAddTeamTx(tx, { tournamentId: league.id, emailA: l1.email, emailB: l2.email });
+      const [slot] = await placeholders(tx, league.id);
+      await fillOpenSlotTx(tx, slot.id, late.teamId, new Date(weekDueBy(START, 1).getTime() - 6 * 86_400_000));
+      const all = await poolMatches(tx, league.id);
+      assert.ok(all.every((m) => m.teamAId !== slot.id && m.teamBId !== slot.id), "no byes left");
+
+      // 5. Play 8 weeks: lower team id wins; one match per week left unreported for the clock.
+      const ids = [...new Set(all.flatMap((m) => [m.teamAId!, m.teamBId!]))].sort();
+      for (let w = 1; w <= 8; w++) {
+        const week = all.filter((m) => m.round === w);
+        for (const m of week.slice(1)) {
+          const aWins = ids.indexOf(m.teamAId!) < ids.indexOf(m.teamBId!);
+          const reporter = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, m.teamAId!)))[0].memberId;
+          await reportScoreTx(tx, { userId: reporter, matchId: m.id, games: aWins ? [[11, 6], [11, 6]] : [[6, 11], [6, 11]] });
+        }
+        // Sunday after the deadline: the dispute window (24h) has closed for these, and week[0] was never reported.
+        const tick = await leagueTickTx(tx, league.id, new Date(weekDueBy(START, w).getTime() + 30 * 3_600_000));
+        assert.equal(tick.confirmed, week.length - 1, `week ${w} auto-confirmed`);
+        assert.equal(tick.settled, 1, `week ${w} unreported match settled`);
+      }
+      const done = await poolMatches(tx, league.id);
+      assert.ok(done.every((m) => m.status === "confirmed" || m.status === "forfeited"));
+      assert.equal(done.filter((m) => m.status === "forfeited" && m.winnerTeamId === null).length, 8, "8 double forfeits");
+
+      // 6. Playoffs: top 4, semis then final, winners advance via member report + confirm.
+      const { seeds } = await generatePlayoffsTx(tx, league.id);
+      assert.equal(seeds.length, 4);
+      const ko = async () =>
+        (await tx.select().from(schema.matches).where(and(eq(schema.matches.tournamentId, league.id), eq(schema.matches.stage, "knockout")))).sort(
+          (a, b) => a.round! - b.round! || a.slot! - b.slot!,
+        );
+      const play = async (matchId: string, teamAId: string, teamBId: string) => {
+        const [ra] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teamAId))).map((r) => r.memberId);
+        const [rb] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teamBId))).map((r) => r.memberId);
+        await reportScoreTx(tx, { userId: ra, matchId, games: [[11, 8], [11, 8]] });
+        await confirmScoreTx(tx, { userId: rb, matchId });
+      };
+      let bracket = await ko();
+      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: fas[0].id, matchId: bracket[0].id })), LeagueError);
+      for (const m of bracket.filter((x) => x.round === 1)) await play(m.id, m.teamAId!, m.teamBId!);
+      bracket = await ko();
+      const final = bracket.find((x) => x.round === 2)!;
+      assert.deepEqual([final.teamAId, final.teamBId], [seeds[0], seeds[1]], "1 and 2 seeds meet in the final");
+      await play(final.id, final.teamAId!, final.teamBId!);
+      const [champ] = (await ko()).filter((x) => x.round === 2);
+      assert.deepEqual([champ.status, champ.winnerTeamId], ["confirmed", seeds[0]]);
     },
   ],
 ];

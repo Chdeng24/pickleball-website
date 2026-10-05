@@ -13,7 +13,7 @@ import { seasonConfig, settleMatchTx } from "@/lib/tournament";
  * transaction — so overlapping or repeated runs never double-send, and a
  * missed run is caught up by the next.
  *
- *   1. Auto-confirm scores whose dispute window has closed.
+ *   1. Auto-confirm scores whose dispute window has closed (advancing playoff winners).
  *   2. Sunday ~10 AM: settle the week's unreported round-robin matches
  *      (makeup not played → the team that missed the original week forfeits; otherwise double forfeit).
  *   3. After Wednesday 11:59 PM: "post your match time" to both teams if nobody has.
@@ -22,8 +22,7 @@ import { seasonConfig, settleMatchTx } from "@/lib/tournament";
  * Those two are the only recurring emails — by design, to keep inboxes quiet.
  */
 export async function runLeagueTick(now = new Date()) {
-  const { confirmed } = await autoConfirmDueMatchReports(now);
-  const totals = { confirmed, settled: 0, reminderEmails: 0, reportEmails: 0 };
+  const totals = { confirmed: 0, settled: 0, reminderEmails: 0, reportEmails: 0 };
 
   const leagues = await db()
     .select({ id: schema.tournaments.id })
@@ -34,6 +33,7 @@ export async function runLeagueTick(now = new Date()) {
     // Emails go out only after the claims commit — a rolled-back tick never sends.
     const r = await withTransaction((tx) => leagueTickTx(tx, id, now));
     await sendMany(r.outbox);
+    totals.confirmed += r.confirmed;
     totals.settled += r.settled;
     totals.reminderEmails += r.reminderEmails;
     totals.reportEmails += r.reportEmails;
@@ -45,7 +45,7 @@ type Outbox = Parameters<typeof sendMany>[0];
 
 /** One league's tick, inside one transaction holding the league row lock. Returns the emails to send once committed. */
 export async function leagueTickTx(tx: Tx, tournamentId: string, now: Date) {
-  const out = { outbox: [] as Outbox, settled: 0, reminderEmails: 0, reportEmails: 0 };
+  const out = { outbox: [] as Outbox, confirmed: 0, settled: 0, reminderEmails: 0, reportEmails: 0 };
   const [tournament] = await tx.select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId)).for("update");
   if (!tournament?.poolsAnnouncedAt || !tournament.seasonStartsOn || !tournament.finalOn) return out;
   if (tournament.status !== "pools" && tournament.status !== "knockout") return out;
@@ -69,6 +69,24 @@ export async function leagueTickTx(tx: Tx, tournamentId: string, now: Date) {
   );
   const matches = await tx.select().from(schema.matches).where(eq(schema.matches.tournamentId, tournament.id));
   type M = (typeof matches)[number];
+
+  /* 1. Auto-confirm reported scores whose dispute window closed — and advance playoff winners. */
+  const windowMs = tournament.autoconfirmHours * 60 * 60 * 1000;
+  const reported = matches.filter((m) => m.status === "reported");
+  if (reported.length) {
+    const reports = await tx
+      .select()
+      .from(schema.matchReports)
+      .where(and(inArray(schema.matchReports.matchId, reported.map((m) => m.id)), isNull(schema.matchReports.confirmedAt), isNull(schema.matchReports.disputedBy)));
+    for (const r of reports) {
+      if (r.createdAt.getTime() + windowMs > now.getTime()) continue;
+      const m = reported.find((x) => x.id === r.matchId)!;
+      await tx.update(schema.matchReports).set({ confirmedAt: now }).where(eq(schema.matchReports.id, r.id));
+      await settleMatchTx(tx, m, "confirmed", r.winnerTeamId);
+      m.status = "confirmed";
+      out.confirmed++;
+    }
+  }
 
   const line = (m: M, teamId: string): MatchLine => {
     const opp = teams.get((m.teamAId === teamId ? m.teamBId : m.teamAId) ?? "");
@@ -127,36 +145,4 @@ export async function leagueTickTx(tx: Tx, tournamentId: string, now: Date) {
     }
   }
   return out;
-}
-
-/** Auto-confirms any match report whose dispute window has closed with no dispute — and advances the winner in the playoffs. */
-export async function autoConfirmDueMatchReports(now = new Date()): Promise<{ confirmed: number }> {
-  const pendingReports = await db()
-    .select({ report: schema.matchReports, tournament: schema.tournaments })
-    .from(schema.matchReports)
-    .innerJoin(schema.matches, eq(schema.matchReports.matchId, schema.matches.id))
-    .innerJoin(schema.tournaments, eq(schema.matches.tournamentId, schema.tournaments.id))
-    .where(and(isNull(schema.matchReports.confirmedAt), isNull(schema.matchReports.disputedBy), eq(schema.matches.status, "reported")));
-
-  let confirmed = 0;
-  for (const { report, tournament } of pendingReports) {
-    const dueAt = new Date(report.createdAt.getTime() + tournament.autoconfirmHours * 60 * 60 * 1000);
-    if (dueAt > now) continue;
-
-    const done = await withTransaction(async (tx) => {
-      const [match] = await tx.select().from(schema.matches).where(eq(schema.matches.id, report.matchId)).for("update");
-      if (!match || match.status !== "reported") return false;
-      const claimed = await tx
-        .update(schema.matchReports)
-        .set({ confirmedAt: now })
-        .where(and(eq(schema.matchReports.id, report.id), isNull(schema.matchReports.confirmedAt), isNull(schema.matchReports.disputedBy)))
-        .returning({ id: schema.matchReports.id });
-      if (claimed.length === 0) return false;
-      await settleMatchTx(tx, match, "confirmed", report.winnerTeamId);
-      return true;
-    });
-    if (done) confirmed++;
-  }
-
-  return { confirmed };
 }
