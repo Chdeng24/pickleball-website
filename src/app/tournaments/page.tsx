@@ -16,7 +16,7 @@ import { db, schema } from "@/db";
 import { formatDeadline, formatEventDay, formatEventWhen, utcToLaInputValue } from "@/lib/dates";
 import { membershipsFor, spotsTakenByLeague, teamMembers } from "@/lib/league";
 import { loadLeagueView, resultText, type LeagueView } from "@/lib/league-view";
-import { outOfTownProblem, playoffRounds, regularSeasonEndsAt, scheduleBy, weekOf } from "@/lib/schedule";
+import { FORFEIT_REASON, playoffRounds, regularSeasonEndsAt, scheduleBy, skipDecision, SKIP_LIMIT, weekOf } from "@/lib/schedule";
 import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import {
   isRegistrationOpen,
@@ -32,7 +32,7 @@ import { cn } from "@/lib/utils";
 import { RegisterForm } from "./register-form";
 import { InviteButtons } from "./invite-buttons";
 import { InvitePartnerForm, LeaveLeagueButton } from "./team-controls";
-import { ScoreReportForm, DisputeScoreButton, ConfirmScoreButton, OutOfTownButton, PostTimeForm } from "./score-form";
+import { ScoreReportForm, DisputeScoreButton, ConfirmScoreButton, SkipButton, PostTimeForm } from "./score-form";
 
 export const metadata: Metadata = { title: "Tournaments" };
 
@@ -330,10 +330,17 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
   const myPlayers = new Set(view.players(teamId).map((p) => p.memberId));
   const upNext = mine.find((m) => m.status === "pending" && !view.isBye(m) && m.dueBy && m.dueBy >= now);
   const seasonEnd = view.season ? regularSeasonEndsAt(view.season) : null;
+  const skipsUsed = view.pool.filter((m) => m.extendedForTeamId === teamId).length;
+  const skipsLeft = Math.max(0, SKIP_LIMIT - skipsUsed);
 
   return (
     <div className="space-y-3">
-      <p className="text-xs font-bold uppercase tracking-wide text-ink/50">Your matches</p>
+      <p className="flex flex-wrap items-baseline justify-between gap-2 text-xs font-bold uppercase tracking-wide text-ink/50">
+        Your matches
+        <span className={skipsLeft ? "text-ink/45" : "text-red-700"}>
+          {skipsLeft ? `${skipsLeft} skip left this season` : "Skip used — any more skips are forfeits"}
+        </span>
+      </p>
       {mine.length === 0 && <p className="text-sm text-ink/50">No matches yet.</p>}
       {mine.map((m) => {
         const oppId = m.teamAId === teamId ? m.teamBId : m.teamAId;
@@ -341,7 +348,8 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
         const report = view.reportByMatch.get(m.id);
         const reportedByUs = Boolean(report?.reportedBy && myPlayers.has(report.reportedBy));
         const known = Boolean(m.teamAId && m.teamBId);
-        const awayOk = seasonEnd && !bye && known && outOfTownProblem(m, now, seasonEnd) === null;
+        const skip = seasonEnd && !bye && known ? skipDecision(m, { teamId, skipsUsed }, now, seasonEnd) : null;
+        const othersMakeup = Boolean(m.extendedForTeamId && m.extendedForTeamId !== teamId && m.status === "pending");
         const opponents = oppId && !bye ? view.players(oppId) : [];
 
         return (
@@ -385,6 +393,14 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
               </p>
             )}
 
+            {othersMakeup && (
+              <p className="mt-1 text-xs text-ink/55">
+                Makeup — {view.name(oppId)} couldn&apos;t play the original week. If it isn&apos;t played by the deadline, they forfeit it.
+              </p>
+            )}
+            {m.status === "pending" && m.extendedForTeamId === teamId && (
+              <p className="mt-1 text-xs font-semibold text-red-700">Your team&apos;s makeup — if it isn&apos;t played by the deadline, it&apos;s a forfeit.</p>
+            )}
             {m.status === "pending" && !bye && known && (
               <div className="mt-2 flex flex-wrap items-center gap-4">
                 <PostTimeForm
@@ -393,7 +409,14 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
                   currentNote={m.scheduledNote}
                 />
                 <ScoreReportForm matchId={m.id} teamAName={view.name(m.teamAId)} teamBName={view.name(m.teamBId)} />
-                {awayOk && <OutOfTownButton matchId={m.id} />}
+                {skip && skip.kind !== "blocked" && (
+                  <SkipButton
+                    matchId={m.id}
+                    consequence={skip.kind}
+                    warning={skip.kind === "forfeit" ? FORFEIT_REASON[skip.reason] : undefined}
+                    opponentName={view.name(oppId)}
+                  />
+                )}
               </div>
             )}
             {m.status === "reported" &&

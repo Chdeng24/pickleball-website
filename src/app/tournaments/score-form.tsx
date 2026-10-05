@@ -3,14 +3,14 @@
 import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { reportScore, disputeScore, confirmScore, markOutOfTown, postMatchTime, type ActionResult } from "./actions";
+import { reportScore, disputeScore, confirmScore, skipMatch, postMatchTime, type ActionResult } from "./actions";
 import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
 const safeReportScore = safeAction(reportScore);
 const safeDisputeScore = safeAction(disputeScore);
 const safeConfirmScore = safeAction(confirmScore);
-const safeMarkOutOfTown = safeAction(markOutOfTown);
+const safeSkipMatch = safeAction(skipMatch);
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -155,12 +155,28 @@ export function ConfirmScoreButton({ matchId }: { matchId: string }) {
   );
 }
 
-/** Push this week's match to a makeup next week. Two taps, because the asking team forfeits if the makeup isn't played. */
-export function OutOfTownButton({ matchId }: { matchId: string }) {
+/**
+ * "Can't make it this week." Two taps, and the confirm step says exactly what
+ * happens: the team's one makeup of the season, or — once that's used — a
+ * forfeit to the other team.
+ */
+export function SkipButton({
+  matchId,
+  consequence,
+  warning,
+  opponentName,
+}: {
+  matchId: string;
+  consequence: "makeup" | "forfeit";
+  /** Why it's a forfeit (shown in the confirm step). */
+  warning?: string;
+  opponentName: string;
+}) {
   const [armed, setArmed] = useState(false);
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
   const router = useRouter();
+  const forfeit = consequence === "forfeit";
 
   if (result?.ok) return <p className="text-xs text-navy-800">{result.message}</p>;
   if (!armed) {
@@ -171,25 +187,36 @@ export function OutOfTownButton({ matchId }: { matchId: string }) {
     );
   }
   return (
-    <div className="mt-2 border-2 border-gold-500 bg-gold-500/10 p-3">
-      <p className="text-sm text-navy-900">
-        Sick or out of town? This match becomes a makeup due next Saturday, and your opponents are emailed. If the makeup
-        doesn&apos;t happen — for either team — your team forfeits it. Only once per match.
-      </p>
+    <div className={forfeit ? "mt-2 border-2 border-red-300 bg-red-50 p-3" : "mt-2 border-2 border-gold-500 bg-gold-500/10 p-3"}>
+      {forfeit ? (
+        <p className="text-sm text-navy-900">
+          <strong>{warning}</strong> {opponentName} gets the win, and everyone in the match is emailed. This can&apos;t be undone
+          from here.
+        </p>
+      ) : (
+        <p className="text-sm text-navy-900">
+          This uses your team&apos;s <strong>one skip for the season</strong>. The match becomes a makeup due next Saturday and your
+          opponents are emailed. If the makeup doesn&apos;t happen, your team forfeits it — and any skip after this is a forfeit.
+        </p>
+      )}
       <div className="mt-2 flex gap-3">
         <button
           type="button"
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const res = await safeMarkOutOfTown(matchId);
+              const res = await safeSkipMatch(matchId, consequence);
               setResult(res);
               if (res.ok) router.refresh();
             })
           }
-          className="h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
+          className={
+            forfeit
+              ? "h-9 bg-red-600 px-4 text-xs font-bold uppercase text-white hover:bg-red-700 disabled:opacity-50"
+              : "h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
+          }
         >
-          {pending ? "Saving…" : "Move to next week"}
+          {pending ? "Saving…" : forfeit ? "Forfeit this match" : "Use our skip"}
         </button>
         <button type="button" onClick={() => setArmed(false)} className="text-xs font-bold uppercase text-ink/50">
           Cancel

@@ -294,20 +294,51 @@ export type MatchState = {
   extendedForTeamId: string | null;
 };
 
+/** Skips (makeups) each team gets per season. Any skip past this is a forfeit. */
+export const SKIP_LIMIT = 1;
+
+export type SkipDecision =
+  | { kind: "makeup" }
+  | { kind: "forfeit"; reason: "skip_used" | "own_makeup" | "no_week_left" }
+  | { kind: "blocked"; message: string };
+
 /**
- * "We can't make it this week" (sick, out of town) — pushes a round-robin
- * match to the next week's Saturday as a makeup. Once per match, before the deadline, and never
- * past the catch-up weeks (playoff seeding can't wait). The team that asked
- * forfeits if the makeup isn't played.
+ * "We can't make it this week" (sick, out of town). What tapping it does for
+ * this team on this match:
+ *
+ *   - their first skip of the season → the match becomes a makeup due next Saturday
+ *   - any skip after that            → they forfeit it, right away
+ *   - they can't make their own makeup → they forfeit it (the original rule)
+ *   - no week left before playoffs   → they forfeit it
+ *
+ * Nothing at all for playoff matches, finished matches, after the deadline,
+ * or a makeup the *other* team asked for (if it isn't played, that team
+ * forfeits at the deadline — the team that can still play does nothing).
  */
-export function outOfTownProblem(m: MatchState, now: Date, seasonEnd: Date): string | null {
-  if (m.stage !== "pool") return "Playoff matches can't be pushed back — the next round is waiting on it.";
-  if (m.status !== "pending") return "This match already has a result.";
-  if (m.extendedForTeamId) return "This match is already a makeup — it can only be pushed back once.";
-  if (!m.dueBy || now > m.dueBy) return "This week's deadline has passed.";
-  if (shiftDeadline(m.dueBy, 1) > seasonEnd) return "There's no week left to make this one up before playoffs.";
-  return null;
+export function skipDecision(
+  m: MatchState,
+  team: { teamId: string; skipsUsed: number },
+  now: Date,
+  seasonEnd: Date,
+): SkipDecision {
+  if (m.stage !== "pool") return { kind: "blocked", message: "Playoff matches can't be skipped — message exec if something's wrong." };
+  if (m.status !== "pending") return { kind: "blocked", message: "This match already has a result." };
+  if (!m.dueBy || now > m.dueBy) return { kind: "blocked", message: "This week's deadline has passed." };
+  if (m.extendedForTeamId === team.teamId) return { kind: "forfeit", reason: "own_makeup" };
+  if (m.extendedForTeamId) {
+    return { kind: "blocked", message: "This is already the other team's makeup — if it isn't played by the deadline, they forfeit it." };
+  }
+  if (team.skipsUsed >= SKIP_LIMIT) return { kind: "forfeit", reason: "skip_used" };
+  if (shiftDeadline(m.dueBy, 1) > seasonEnd) return { kind: "forfeit", reason: "no_week_left" };
+  return { kind: "makeup" };
 }
+
+/** The one-line warning shown before a skip that forfeits. */
+export const FORFEIT_REASON: Record<Extract<SkipDecision, { kind: "forfeit" }>["reason"], string> = {
+  skip_used: "Your team already used its one skip this season, so skipping this match is a forfeit.",
+  own_makeup: "This is your team's makeup — not playing it is a forfeit.",
+  no_week_left: "There's no week left to make this up before playoffs, so skipping it is a forfeit.",
+};
 
 /**
  * What happens to a round-robin match nobody reported by the deadline.

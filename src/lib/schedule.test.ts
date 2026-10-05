@@ -6,7 +6,8 @@ import {
   bracketSeedPairs,
   matchLabel,
   nextBracketSpot,
-  outOfTownProblem,
+  skipDecision,
+  SKIP_LIMIT,
   overdueOutcome,
   playoffRounds,
   recommendedPlayoffTeams,
@@ -186,23 +187,35 @@ test("bracket seeding keeps the top two apart until the final", () => {
   assert.deepEqual(nextBracketSpot(3), { slot: 1, side: "B" });
 });
 
-test("out of town: once, before the deadline, round robin only, not past catch-up", () => {
+test("skips: one makeup per team per season; every skip after that is a forfeit", () => {
+  assert.equal(SKIP_LIMIT, 1);
   const seasonEnd = weekDueBy(FALL.seasonStartsOn, 8);
   const base = { stage: "pool" as const, status: "pending" as const, extendedForTeamId: null };
   const wk1 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 1) };
   const before = new Date("2026-10-08T12:00:00-07:00");
+  const fresh = { teamId: "A", skipsUsed: 0 };
 
-  assert.equal(outOfTownProblem(wk1, before, seasonEnd), null);
-  assert.match(outOfTownProblem(wk1, new Date("2026-10-12T09:00:00-07:00"), seasonEnd)!, /deadline has passed/);
-  assert.match(outOfTownProblem({ ...wk1, extendedForTeamId: "x" }, before, seasonEnd)!, /only be pushed back once/);
-  assert.match(outOfTownProblem({ ...wk1, status: "reported" }, before, seasonEnd)!, /already has a result/);
-  assert.match(outOfTownProblem({ ...wk1, stage: "knockout" }, before, seasonEnd)!, /Playoff/);
+  // First skip → makeup. Second → forfeit, no matter which match.
+  assert.deepEqual(skipDecision(wk1, fresh, before, seasonEnd), { kind: "makeup" });
+  assert.deepEqual(skipDecision(wk1, { teamId: "A", skipsUsed: 1 }, before, seasonEnd), { kind: "forfeit", reason: "skip_used" });
+  assert.deepEqual(skipDecision(wk1, { teamId: "A", skipsUsed: 3 }, before, seasonEnd), { kind: "forfeit", reason: "skip_used" });
 
-  // Week 7 can still go into the catch-up week; week 8 can't go anywhere.
+  // Can't make your own makeup → forfeit (even though that skip is already counted).
+  const makeup = { ...wk1, extendedForTeamId: "A" };
+  assert.deepEqual(skipDecision(makeup, { teamId: "A", skipsUsed: 1 }, before, seasonEnd), { kind: "forfeit", reason: "own_makeup" });
+  // The other team on someone else's makeup can't skip it — nothing to do; the asker forfeits at the deadline.
+  assert.match((skipDecision(makeup, { teamId: "B", skipsUsed: 0 }, before, seasonEnd) as { message: string }).message, /other team's makeup/);
+
+  // Week 8 has no makeup week → skipping it is a forfeit even with a skip left; week 7 can still go to week 8.
   const wk7 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 7) };
   const wk8 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 8) };
-  assert.equal(outOfTownProblem(wk7, new Date("2026-11-17T12:00:00-08:00"), seasonEnd), null);
-  assert.match(outOfTownProblem(wk8, new Date("2026-11-24T12:00:00-08:00"), seasonEnd)!, /no week left/);
+  assert.deepEqual(skipDecision(wk7, fresh, new Date("2026-11-17T12:00:00-08:00"), seasonEnd), { kind: "makeup" });
+  assert.deepEqual(skipDecision(wk8, fresh, new Date("2026-11-24T12:00:00-08:00"), seasonEnd), { kind: "forfeit", reason: "no_week_left" });
+
+  // Never: playoffs, finished, or past the deadline.
+  assert.equal(skipDecision({ ...wk1, stage: "knockout" }, fresh, before, seasonEnd).kind, "blocked");
+  assert.equal(skipDecision({ ...wk1, status: "reported" }, fresh, before, seasonEnd).kind, "blocked");
+  assert.equal(skipDecision(wk1, fresh, new Date("2026-10-11T09:00:00-07:00"), seasonEnd).kind, "blocked");
 });
 
 test("overdue: the out-of-town team forfeits an unplayed makeup; otherwise double forfeit", () => {

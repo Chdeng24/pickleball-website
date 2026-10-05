@@ -304,8 +304,24 @@ export function outOfTownEmail(
        <p><strong>${esc(d.requestingTeam)}</strong> can't make it this week, so their match against
        <strong>${esc(d.otherTeam)}</strong> is now a makeup, due <strong>${esc(formatDeadline(d.newDueBy))}</strong>.</p>
        <p>That week you'll have this makeup plus your regular match — post a time for it by Wednesday like any other.
-       If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it.</p>
+       If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it. (That was their one skip for the season.)</p>
        ${button(`${club.url}/tournaments`, "See your schedule")}`,
+    ),
+  };
+}
+
+/** A team skipped a match it couldn't skip for free — the other team wins by forfeit. */
+export function skipForfeitEmail(to: Recipient, d: { tournamentName: string; forfeitingTeam: string; otherTeam: string }): Message {
+  return {
+    to: to.email,
+    subject: `${d.tournamentName}: ${d.forfeitingTeam} forfeited`,
+    html: layout(
+      `${d.forfeitingTeam} forfeited their match against ${d.otherTeam}.`,
+      `${hey(to)}
+       <p><strong>${esc(d.forfeitingTeam)}</strong> can't play their match against <strong>${esc(d.otherTeam)}</strong>,
+       and they've already used their one skip this season (or it was their makeup), so it's a forfeit —
+       <strong>${esc(d.otherTeam)}</strong> gets the win. No need to schedule this one.</p>
+       ${button(`${club.url}/tournaments`, "See the standings")}`,
     ),
   };
 }

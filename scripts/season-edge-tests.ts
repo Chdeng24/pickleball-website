@@ -18,7 +18,7 @@
 import assert from "node:assert/strict";
 import { Pool } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
-import { and, eq } from "drizzle-orm";
+import { and, eq, like } from "drizzle-orm";
 import * as schema from "../src/db/schema";
 import type { Tx } from "../src/db/pool";
 import {
@@ -33,7 +33,7 @@ import {
 import {
   confirmScoreTx,
   disputeScoreTx,
-  markOutOfTownTx,
+  skipMatchTx,
   postMatchTimeTx,
   reportScoreTx,
   resolveDisputeTx,
@@ -460,17 +460,17 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m2.id));
       assert.deepEqual([row.status, row.winnerTeamId], ["confirmed", m2.teamBId]);
 
-      // Can't make it: pushes a week, clears the posted time, once per match, either team only once.
+      // Can't make it: pushes a week and clears the posted time; the other team can't skip someone's makeup.
       const [e1] = await roster(m3.teamAId!);
       const [f1] = await roster(m3.teamBId!);
       await postMatchTimeTx(tx, { userId: e1, matchId: m3.id, when: tue, note: "" });
-      const { notify, mail } = await markOutOfTownTx(tx, { userId: e1, matchId: m3.id, now: tue });
-      assert.equal(notify.length, 3);
-      assert.equal(mail.newDueBy.getTime(), weekDueBy(START, 2).getTime());
+      const first = await skipMatchTx(tx, { userId: e1, matchId: m3.id, now: tue, expect: "makeup" });
+      assert.equal(first.outcome, "makeup");
+      assert.equal(first.notify.length, 3);
+      assert.equal(first.outcome === "makeup" && first.mail.newDueBy.getTime(), weekDueBy(START, 2).getTime());
       [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m3.id));
       assert.deepEqual([row.extendedForTeamId, row.scheduledAt], [m3.teamAId, null]);
-      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: e1, matchId: m3.id, now: tue })), AlreadyDone);
-      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: f1, matchId: m3.id, now: tue })), LeagueError, /only be pushed back once/);
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: f1, matchId: m3.id, now: tue, expect: "makeup" })), LeagueError, /other team's makeup/);
     },
   ],
   [
@@ -537,7 +537,8 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
         await confirmScoreTx(tx, { userId: rb, matchId });
       };
       let bracket = await ko();
-      await rejects(sp(tx, (t) => markOutOfTownTx(t, { userId: fas[0].id, matchId: bracket[0].id })), LeagueError);
+      const [inSemi] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, bracket[0].teamAId!))).map((r) => r.memberId);
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: inSemi, matchId: bracket[0].id, expect: "makeup" })), LeagueError, /Playoff/);
       for (const m of bracket.filter((x) => x.round === 1)) await play(m.id, m.teamAId!, m.teamBId!);
       bracket = await ko();
       const final = bracket.find((x) => x.round === 2)!;
@@ -547,7 +548,97 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       assert.deepEqual([champ.status, champ.winnerTeamId], ["confirmed", seeds[0]]);
     },
   ],
+  [
+    "one skip per season: 1st skip → makeup; 2nd skip → instant forfeit; own makeup → forfeit; week 8 → forfeit; stale tab refused",
+    async (tx) => {
+      const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
+      const teams = await makeTeams(tx, league.id, 10);
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      await publishDrawTx(tx, league.id);
+      const ms = await poolMatches(tx, league.id);
+      const team = teams[0];
+      const [player] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, team))).map((r) => r.memberId);
+      const mine = (w: number) => ms.find((m) => m.round === w && (m.teamAId === team || m.teamBId === team))!;
+      const other = (m: (typeof ms)[number]) => (m.teamAId === team ? m.teamBId! : m.teamAId!);
+      const inWeek = (w: number) => new Date(weekDueBy(START, w).getTime() - 4 * 86_400_000); // Tuesday night
+      const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
+
+      // Week 1: first skip → makeup due week 2.
+      const w1 = mine(1);
+      assert.equal((await skipMatchTx(tx, { userId: player, matchId: w1.id, now: inWeek(1), expect: "makeup" })).outcome, "makeup");
+      assert.equal((await get(w1.id)).dueBy!.getTime(), weekDueBy(START, 2).getTime());
+
+      // Week 2, a different match: a stale "makeup" button is refused (nothing changes)...
+      const w2 = mine(2);
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: player, matchId: w2.id, now: inWeek(2), expect: "makeup" })), LeagueError, /skip was just used/);
+      assert.equal((await get(w2.id)).status, "pending");
+      // ...and the real one forfeits it to the opponent, right away.
+      const f = await skipMatchTx(tx, { userId: player, matchId: w2.id, now: inWeek(2), expect: "forfeit" });
+      assert.equal(f.outcome, "forfeit");
+      assert.equal(f.outcome === "forfeit" && f.reason, "skip_used");
+      assert.deepEqual([(await get(w2.id)).status, (await get(w2.id)).winnerTeamId], ["forfeited", other(w2)]);
+
+      // Can't make their own makeup (week 1's, now due week 2) → forfeit to the opponent.
+      const own = await skipMatchTx(tx, { userId: player, matchId: w1.id, now: inWeek(2), expect: "forfeit" });
+      assert.equal(own.outcome === "forfeit" && own.reason, "own_makeup");
+      assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).winnerTeamId], ["forfeited", other(w1)]);
+
+      // Week 3: still a forfeit (the limit is per season, not per week).
+      assert.equal((await skipMatchTx(tx, { userId: player, matchId: mine(3).id, now: inWeek(3), expect: "forfeit" })).outcome, "forfeit");
+
+      // A team with its skip unused: week 8 has no makeup week, so skipping it is a forfeit — and it doesn't use up the skip.
+      const fresh = teams[5];
+      const [freshPlayer] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, fresh))).map((r) => r.memberId);
+      const w8 = ms.find((m) => m.round === 8 && (m.teamAId === fresh || m.teamBId === fresh))!;
+      const r8 = await skipMatchTx(tx, { userId: freshPlayer, matchId: w8.id, now: inWeek(8), expect: "forfeit" });
+      assert.equal(r8.outcome === "forfeit" && r8.reason, "no_week_left");
+      assert.equal(
+        (await tx.select().from(schema.matches).where(and(eq(schema.matches.tournamentId, league.id), eq(schema.matches.extendedForTeamId, fresh)))).length,
+        0,
+      );
+
+      // Past the deadline: nothing.
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: player, matchId: mine(4).id, now: new Date(weekDueBy(START, 4).getTime() + 60_000), expect: "forfeit" })), LeagueError, /deadline has passed/);
+    },
+  ],
 ];
+
+/**
+ * Two skips at the same instant, on two different matches, from separate
+ * connections: exactly one may become the free makeup; the other must be
+ * refused. Needs committed rows (a rolled-back transaction can't race
+ * itself), so it builds a hidden one-day-kind league and deletes it after.
+ */
+async function skipRace(): Promise<void> {
+  const ids: { league?: string; users: string[] } = { users: [] };
+  try {
+    const setup = await conn.transaction(async (tx) => {
+      const league = await makeLeague(tx, { kind: "one_day", name: `${tag} race` });
+      ids.league = league.id;
+      const teams = await makeTeams(tx, league.id, 4);
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      await publishDrawTx(tx, league.id);
+      const members = await tx.select().from(schema.tmTeamMembers);
+      const mine = members.filter((m) => teams.includes(m.teamId));
+      ids.users = mine.map((m) => m.memberId);
+      const ms = await poolMatches(tx, league.id);
+      const player = mine.find((m) => m.teamId === teams[0])!.memberId;
+      const two = ms.filter((m) => (m.round === 1 || m.round === 2) && (m.teamAId === teams[0] || m.teamBId === teams[0]));
+      return { player, matchIds: two.map((m) => m.id) };
+    });
+
+    const now = new Date(weekDueBy(START, 1).getTime() - 4 * 86_400_000);
+    const results = await Promise.allSettled(
+      setup.matchIds.map((matchId) => conn.transaction((tx) => skipMatchTx(tx, { userId: setup.player, matchId, now, expect: "makeup" }))),
+    );
+    const won = results.filter((r) => r.status === "fulfilled").length;
+    const refused = results.filter((r) => r.status === "rejected" && r.reason instanceof LeagueError && /skip was just used/.test(r.reason.message)).length;
+    assert.deepEqual([won, refused], [1, 1], `expected exactly one makeup; got ${JSON.stringify(results.map((r) => r.status))}`);
+  } finally {
+    if (ids.league) await conn.delete(schema.tournaments).where(eq(schema.tournaments.id, ids.league));
+    for (const id of ids.users) await conn.delete(schema.users).where(eq(schema.users.id, id));
+  }
+}
 
 async function main() {
   let failed = 0;
@@ -567,10 +658,22 @@ async function main() {
     }
   }
 
-  const leftovers = await conn.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, `${tag}-1@berkeley.edu`));
+  try {
+    await skipRace();
+    console.log("  ✓ race: two skips at the same instant → exactly one makeup, the other refused");
+  } catch (e) {
+    failed++;
+    console.log(`  ✗ race: two skips at the same instant\n      ${e instanceof Error ? e.message : e}`);
+  }
+
+  // Nothing tagged may survive: scenarios roll back, and the race cleans up after itself.
+  const leftovers = await conn.select({ id: schema.users.id }).from(schema.users).where(like(schema.users.email, `${tag}-%`));
+  const leftLeagues = await conn.select({ id: schema.tournaments.id }).from(schema.tournaments).where(like(schema.tournaments.name, `${tag}%`));
   await pool.end();
-  console.log(`\n${scenarios.length - failed}/${scenarios.length} passed${leftovers.length ? " — WARNING: test rows leaked" : ""}`);
-  process.exit(failed || leftovers.length ? 1 : 0);
+  const total = scenarios.length + 1;
+  const leaked = leftovers.length + leftLeagues.length;
+  console.log(`\n${total - failed}/${total} passed${leaked ? " — WARNING: test rows leaked" : ""}`);
+  process.exit(failed || leaked ? 1 : 0);
 }
 
 main().catch((e) => {
