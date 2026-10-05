@@ -151,7 +151,7 @@ function SeasonLine({ season, now }: { season: NonNullable<LeagueView["season"]>
   }
   const phase =
     week < 1
-      ? "Week 1 starts Monday"
+      ? "Week 1 starts Sunday"
       : week <= season.roundRobinWeeks
         ? `Week ${week} of ${season.roundRobinWeeks}`
         : week <= season.roundRobinWeeks + season.catchupWeeks

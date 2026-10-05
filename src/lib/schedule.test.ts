@@ -113,10 +113,11 @@ test("calendar: scores are due Saturday 11:59 PM Pacific", () => {
 });
 
 test("weekOf maps instants to season weeks", () => {
-  assert.equal(weekOf("2026-10-05", new Date("2026-10-04T12:00:00-07:00")), 0);
-  assert.equal(weekOf("2026-10-05", new Date("2026-10-05T00:30:00-07:00")), 1);
-  assert.equal(weekOf("2026-10-05", new Date("2026-10-11T23:59:00-07:00")), 1);
-  assert.equal(weekOf("2026-10-05", new Date("2026-10-12T00:01:00-07:00")), 2);
+  // Weeks run Sunday–Saturday: week 1 is Sun Oct 4 – Sat Oct 10.
+  assert.equal(weekOf("2026-10-05", new Date("2026-10-03T12:00:00-07:00")), 0);
+  assert.equal(weekOf("2026-10-05", new Date("2026-10-04T00:30:00-07:00")), 1);
+  assert.equal(weekOf("2026-10-05", new Date("2026-10-10T23:59:00-07:00")), 1);
+  assert.equal(weekOf("2026-10-05", new Date("2026-10-11T00:01:00-07:00")), 2);
 });
 
 test("weekly clock: post-a-time cut-off Wed 11:59 PM, report reminder Sat 9 AM", () => {
@@ -225,10 +226,11 @@ test("overdue: the out-of-town team forfeits an unplayed makeup; otherwise doubl
 });
 
 test("labels: week ranges cross months, makeups and playoff rounds are named", () => {
-  assert.equal(weekRange("2026-10-05", 1), "Oct 5 – 10");
-  assert.equal(weekRange("2026-10-05", 9), "Nov 30 – Dec 5");
+  assert.equal(weekRange("2026-10-05", 1), "Oct 4 – 10");
+  assert.equal(weekRange("2026-10-05", 2), "Oct 11 – 17");
+  assert.equal(weekRange("2026-10-05", 9), "Nov 29 – Dec 5");
   const season = { seasonStartsOn: "2026-10-05", playoffTeams: 8 };
-  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3 · Oct 19 – 24");
+  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3 · Oct 18 – 24");
   assert.equal(matchLabel({ stage: "pool", round: 2, extendedForTeamId: "x" }, season), "Makeup (week 2)");
   assert.equal(matchLabel({ stage: "knockout", round: 1, extendedForTeamId: null }, season), "Quarterfinals");
   assert.equal(matchLabel({ stage: "knockout", round: 3, extendedForTeamId: null }, season), "Final");

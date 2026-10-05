@@ -146,9 +146,9 @@ function mondayOf(dateKey: string): string {
   return addDays(dateKey, -((dow + 6) % 7));
 }
 
-/** Which season week an instant falls in (1-based; 0 or less = before the season). */
+/** Which season week an instant falls in (1-based; 0 or less = before the season). Weeks run Sunday to Saturday. */
 export function weekOf(seasonStartsOn: string, now: Date): number {
-  return Math.floor(daysBetween(seasonStartsOn, pacificDateKey(now)) / 7) + 1;
+  return Math.floor(daysBetween(addDays(seasonStartsOn, -1), pacificDateKey(now)) / 7) + 1;
 }
 
 /** Same Pacific wall-clock deadline, `weeks` later — DST-safe, unlike adding 7×24h. */
@@ -359,16 +359,16 @@ export function overdueOutcome(m: { teamAId: string; teamBId: string; extendedFo
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** The playing days of a week, Monday to Saturday: "Oct 19 – 24" or "Nov 30 – Dec 5" */
+/** A season week, Sunday to Saturday (the score deadline): "Oct 4 – 10" or "Nov 29 – Dec 5" */
 export function weekRange(seasonStartsOn: string, week: number): string {
-  const mon = weekMonday(seasonStartsOn, week);
-  const sun = addDays(mon, 5);
-  const [, m1, d1] = mon.split("-").map(Number);
-  const [, m2, d2] = sun.split("-").map(Number);
+  const first = addDays(weekMonday(seasonStartsOn, week), -1);
+  const last = addDays(first, 6);
+  const [, m1, d1] = first.split("-").map(Number);
+  const [, m2, d2] = last.split("-").map(Number);
   return m1 === m2 ? `${MONTHS[m1 - 1]} ${d1} – ${d2}` : `${MONTHS[m1 - 1]} ${d1} – ${MONTHS[m2 - 1]} ${d2}`;
 }
 
-/** What to call a match everywhere it's shown: "Week 3 · Oct 19 – 25", "Makeup (week 2)", "Semifinals". */
+/** What to call a match everywhere it's shown: "Week 3 · Oct 18 – 24", "Makeup (week 2)", "Semifinals". */
 export function matchLabel(
   m: { stage: "pool" | "knockout"; round: number | null; extendedForTeamId: string | null },
   season: { seasonStartsOn: string; playoffTeams: number },
