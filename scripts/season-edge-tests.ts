@@ -460,6 +460,14 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m2.id));
       assert.deepEqual([row.status, row.winnerTeamId], ["confirmed", m2.teamBId]);
 
+      // Playing ahead: a week-5 match can have its time posted and score reported during week 1, then confirmed.
+      const w5 = (await poolMatches(tx, league.id)).find((m) => m.round === 5 && m.teamAId === m1.teamAId)!;
+      const [w5b] = await roster(w5.teamBId!);
+      await postMatchTimeTx(tx, { userId: a1, matchId: w5.id, when: tue, note: "playing early" });
+      await reportScoreTx(tx, { userId: a1, matchId: w5.id, games: [[11, 3], [11, 3]] });
+      await confirmScoreTx(tx, { userId: w5b, matchId: w5.id });
+      assert.equal((await tx.select().from(schema.matches).where(eq(schema.matches.id, w5.id)))[0].status, "confirmed");
+
       // Can't make it: pushes a week and clears the posted time; the other team can't skip someone's makeup.
       const [e1] = await roster(m3.teamAId!);
       const [f1] = await roster(m3.teamBId!);
