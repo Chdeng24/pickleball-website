@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { requireExec, requireAdmin } from "@/lib/session";
 import { db, schema } from "@/db";
 import { withTransaction } from "@/db/pool";
@@ -368,20 +368,41 @@ export async function publish(tournamentId: string): Promise<ActionResult> {
   await requireExec();
   if (!idSchema.safeParse(tournamentId).success) return { ok: false, error: FRIENDLY.not_found };
 
-  let result;
   try {
-    result = await publishDraw(tournamentId);
+    await publishDraw(tournamentId);
   } catch (e) {
     return fail(e);
   }
+  refresh(tournamentId);
 
   // Emails go out after the draw is committed — a failed send never un-publishes it.
-  const season = seasonConfig(result.tournament);
-  const byId = new Map(result.teams.map((t) => [t.id, t]));
+  try {
+    const outbox = await scheduleEmails(tournamentId, false);
+    await sendMany(outbox);
+    return { ok: true, message: `Published — emailed ${outbox.length} players their schedule.` };
+  } catch (e) {
+    console.error("schedule emails failed after publish", e);
+    return { ok: true, message: "Published — but the schedule emails failed. Use “Email everyone their updated schedule” to retry." };
+  }
+}
+
+/** Every player's current round-robin schedule as an email — on publish, or as an "UPDATED" resend after exec changes it. */
+async function scheduleEmails(tournamentId: string, updated: boolean) {
+  const [tournament] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
+  const season = seasonConfig(tournament);
+  const teams = await db().query.tmTeams.findMany({
+    where: eq(schema.tmTeams.tournamentId, tournamentId),
+    with: { members: { with: { member: true } } },
+  });
+  const matches = await db()
+    .select()
+    .from(schema.matches)
+    .where(and(eq(schema.matches.tournamentId, tournamentId), eq(schema.matches.stage, "pool")));
+  const byId = new Map(teams.map((t) => [t.id, t]));
   const outbox = [];
-  for (const team of result.teams) {
-    if (team.isPlaceholder) continue;
-    const weeks: MatchLine[] = result.matches
+  for (const team of teams) {
+    if (team.isPlaceholder || team.status === "withdrawn" || !team.pool) continue;
+    const weeks: MatchLine[] = matches
       .filter((m) => m.teamAId === team.id || m.teamBId === team.id)
       .sort((a, b) => (a.round ?? 0) - (b.round ?? 0))
       .map((m) => {
@@ -393,15 +414,27 @@ export async function publish(tournamentId: string): Promise<ActionResult> {
       outbox.push(
         scheduleAnnouncedEmail(
           { email: m.member.email, name: m.member.name ?? null },
-          { tournamentName: result.tournament.name, teamName: team.name, weeks, playoffTeams: result.tournament.playoffTeams },
+          { tournamentName: tournament.name, teamName: team.name, weeks, playoffTeams: tournament.playoffTeams, updated },
         ),
       );
     }
   }
-  await sendMany(outbox);
+  return outbox;
+}
 
-  refresh(tournamentId);
-  return { ok: true, message: `Published — emailed ${outbox.length} players their schedule.` };
+/** After exec changes a live schedule: email every player their current schedule, marked UPDATED. */
+export async function resendSchedules(tournamentId: string): Promise<ActionResult> {
+  await requireExec();
+  if (!idSchema.safeParse(tournamentId).success) return { ok: false, error: FRIENDLY.not_found };
+  try {
+    const [t] = await db().select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId));
+    if (!t?.poolsAnnouncedAt || t.status === "complete") return { ok: false, error: "Only a published, running league can resend schedules." };
+    const outbox = await scheduleEmails(tournamentId, true);
+    await sendMany(outbox);
+    return { ok: true, message: `Emailed ${outbox.length} players their updated schedule.` };
+  } catch (e) {
+    return fail(e);
+  }
 }
 
 export async function makePlayoffs(tournamentId: string): Promise<ActionResult> {

@@ -231,7 +231,7 @@ const bookingLine = `<p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.c
 /** The season is published: your whole round-robin schedule, week by week. */
 export function scheduleAnnouncedEmail(
   to: Recipient,
-  d: { tournamentName: string; teamName: string; weeks: MatchLine[]; playoffTeams: number },
+  d: { tournamentName: string; teamName: string; weeks: MatchLine[]; playoffTeams: number; updated?: boolean },
 ): Message {
   const rows = d.weeks
     .map(
@@ -241,11 +241,15 @@ export function scheduleAnnouncedEmail(
     .join("");
   return {
     to: to.email,
-    subject: `${d.tournamentName}: your schedule is out`,
+    subject: d.updated ? `UPDATED ${d.tournamentName} schedule — replaces the earlier email` : `${d.tournamentName}: your schedule is out`,
     html: layout(
       `${d.teamName}'s ${d.tournamentName} schedule.`,
       `${hey(to)}
-       <p>The ${esc(d.tournamentName)} schedule is out. <strong>${esc(d.teamName)}</strong> plays one match a week:</p>
+       <p>${
+         d.updated
+           ? `The ${esc(d.tournamentName)} schedule was <strong>updated</strong> — this replaces the schedule you got earlier.`
+           : `The ${esc(d.tournamentName)} schedule is out.`
+       } <strong>${esc(d.teamName)}</strong> plays one match a week:</p>
        <table style="width:100%;border-collapse:collapse;margin:12px 0;">${rows}</table>
        <p>${esc(leagueInfo.weekRule)} Your opponents' contact info is on the site — message them on Slack to set a time.</p>
        <p>The top ${d.playoffTeams} make the playoffs.</p>

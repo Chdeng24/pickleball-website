@@ -14,6 +14,7 @@ import {
   pairTeams,
   publish,
   randomPair,
+  resendSchedules,
   resolveDispute,
   scrapPlayoffs,
   setResult,
@@ -150,6 +151,18 @@ export function GenerateDraftButton({
         run={() => generateDraft(tournamentId, openSlots)}
       />
     </div>
+  );
+}
+
+export function ResendSchedulesButton({ tournamentId, players }: { tournamentId: string; players: number }) {
+  return (
+    <ConfirmButton
+      label="Email everyone their updated schedule"
+      tone="outline"
+      confirmText={`Email all ${players} players their current schedule, marked UPDATED so it replaces the earlier email? Use this after you've changed matchups.`}
+      confirmLabel="Send emails"
+      run={() => resendSchedules(tournamentId)}
+    />
   );
 }
 

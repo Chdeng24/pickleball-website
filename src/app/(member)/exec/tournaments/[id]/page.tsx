@@ -23,6 +23,7 @@ import {
   PairTeamForm,
   PublishDrawButton,
   RandomPairButton,
+  ResendSchedulesButton,
   ResolveDisputeForm,
   ScrapPlayoffsButton,
   SwapSelect,
@@ -507,7 +508,11 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
       {withdrawn.length > 0 && <p className="text-xs text-ink/40">Withdrawn: {withdrawn.map((t) => t.name).join(", ")}</p>}
 
       {isLive && (
-        <div className="border-t-2 border-navy-900/10 pt-6">
+        <div className="flex flex-wrap items-start gap-4 border-t-2 border-navy-900/10 pt-6">
+          <ResendSchedulesButton
+            tournamentId={league.id}
+            players={scheduled.reduce((n, t) => n + t.roster.filter((m) => m.inviteStatus === "accepted").length, 0)}
+          />
           <EndLeagueButton tournamentId={league.id} />
         </div>
       )}
