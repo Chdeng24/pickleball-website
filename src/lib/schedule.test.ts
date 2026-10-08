@@ -22,6 +22,7 @@ import {
   weekDueBy,
   weekOf,
   weekRange,
+  currentWeek,
   type SeasonConfig,
 } from "./schedule.ts";
 import { formatDeadline } from "./dates.ts";
@@ -110,6 +111,14 @@ test("calendar: each week's match is due the Sunday after, 11:59 PM Pacific", ()
   // Across the Nov 1 DST change the deadline stays 11:59 PM local.
   assert.equal(formatDeadline(weekDueBy(FALL.seasonStartsOn, 5)), "Sun, Nov 8 · 11:59 PM PST");
   assert.equal(formatDeadline(shiftDeadline(weekDueBy(FALL.seasonStartsOn, 4), 1)), "Sun, Nov 8 · 11:59 PM PST");
+});
+
+test("currentWeek: the overlap Sunday still belongs to the week due that night", () => {
+  assert.equal(currentWeek("2026-10-05", new Date("2026-10-04T10:00:00-07:00")), 1);
+  assert.equal(currentWeek("2026-10-05", new Date("2026-10-10T20:00:00-07:00")), 1);
+  assert.equal(currentWeek("2026-10-05", new Date("2026-10-11T21:00:00-07:00")), 1);
+  assert.equal(currentWeek("2026-10-05", new Date("2026-10-12T00:30:00-07:00")), 2);
+  assert.equal(currentWeek("2026-10-05", new Date("2026-10-03T12:00:00-07:00")), 0);
 });
 
 test("weekOf maps instants to season weeks", () => {
@@ -229,11 +238,13 @@ test("overdue: the out-of-town team forfeits an unplayed makeup; otherwise doubl
 });
 
 test("labels: week ranges cross months, makeups and playoff rounds are named", () => {
-  assert.equal(weekRange("2026-10-05", 1), "Oct 4 – 10");
-  assert.equal(weekRange("2026-10-05", 2), "Oct 11 – 17");
-  assert.equal(weekRange("2026-10-05", 9), "Nov 29 – Dec 5");
+  assert.equal(weekRange("2026-10-05", 1), "Oct 4 – 11");
+  assert.equal(weekRange("2026-10-05", 2), "Oct 11 – 18");
+  assert.equal(weekRange("2026-10-05", 9), "Nov 29 – Dec 6");
+  // The range ends on the day the match is actually due.
+  assert.equal(formatDeadline(weekDueBy("2026-10-05", 1)).slice(0, 11), "Sun, Oct 11");
   const season = { seasonStartsOn: "2026-10-05", playoffTeams: 8 };
-  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3 · Oct 18 – 24");
+  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3 · Oct 18 – 25");
   assert.equal(matchLabel({ stage: "pool", round: 2, extendedForTeamId: "x" }, season), "Makeup (week 2)");
   assert.equal(matchLabel({ stage: "knockout", round: 1, extendedForTeamId: null }, season), "Quarterfinals");
   assert.equal(matchLabel({ stage: "knockout", round: 3, extendedForTeamId: null }, season), "Final");

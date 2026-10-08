@@ -615,6 +615,35 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
+    "reporting window: a score reported Sunday night (deadline day), or weeks early, counts — Monday's settling leaves it alone",
+    async (tx) => {
+      const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
+      const teams = await makeTeams(tx, league.id, 4);
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      await publishDrawTx(tx, league.id);
+      const ms = await poolMatches(tx, league.id);
+      const [p1] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teams[0]))).map((r) => r.memberId);
+      const mine = (w: number) => ms.find((m) => m.round === w && (m.teamAId === teams[0] || m.teamBId === teams[0]))!;
+      const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
+      const due1 = weekDueBy(START, 1);
+
+      // Week 1, reported Sunday 9 PM — the last day of the window.
+      const sundayNight = laInputToUtc(`${pacificDateKey(due1)}T21:00`);
+      assert.ok(sundayNight < due1);
+      await reportScoreTx(tx, { userId: p1, matchId: mine(1).id, games: [[11, 6], [11, 8]] });
+      await tx.update(schema.matchReports).set({ createdAt: sundayNight }).where(eq(schema.matchReports.matchId, mine(1).id));
+      // Week 3, reported two weeks early.
+      await reportScoreTx(tx, { userId: p1, matchId: mine(3).id, games: [[11, 4], [11, 4]] });
+
+      // Monday ~10 AM settles unplayed matches only; the Sunday report survives, then auto-confirms 24h later.
+      await leagueTickTx(tx, league.id, new Date(due1.getTime() + 11 * 3_600_000));
+      assert.equal((await get(mine(1).id)).status, "reported");
+      await leagueTickTx(tx, league.id, new Date(sundayNight.getTime() + 25 * 3_600_000));
+      assert.equal((await get(mine(1).id)).status, "confirmed");
+      assert.equal((await get(mine(3).id)).status, "confirmed", "the early report confirmed too");
+    },
+  ],
+  [
     "the skip belongs to the team: partners share one; the opponent is never charged or punished for it",
     async (tx) => {
       const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });

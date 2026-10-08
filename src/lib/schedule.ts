@@ -155,6 +155,16 @@ export function weekOf(seasonStartsOn: string, now: Date): number {
   return Math.floor(daysBetween(addDays(seasonStartsOn, -1), pacificDateKey(now)) / 7) + 1;
 }
 
+/**
+ * The week whose matches are being played right now. Like weekOf, except on
+ * the overlap Sunday it's still the week that's due that night — so Oct 11
+ * shows week 1 (Oct 4 – 11), and week 2 takes over Monday.
+ */
+export function currentWeek(seasonStartsOn: string, now: Date): number {
+  const w = weekOf(seasonStartsOn, now);
+  return w >= 2 && now <= weekDueBy(seasonStartsOn, w - 1) ? w - 1 : w;
+}
+
 /** Same Pacific wall-clock deadline, `weeks` later — DST-safe, unlike adding 7×24h. */
 export function shiftDeadline(dueBy: Date, weeks: number): Date {
   return laDeadlineToUtc(`${addDays(pacificDateKey(dueBy), 7 * weeks)}T23:59`);
@@ -363,10 +373,14 @@ export function overdueOutcome(m: { teamAId: string; teamBId: string; extendedFo
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** A season week, Sunday to Saturday (its match is due the Sunday after): "Oct 4 – 10" or "Nov 29 – Dec 5" */
+/**
+ * The days a week's match can be played and reported: Sunday through the
+ * Sunday deadline after it — "Oct 4 – 11" or "Nov 29 – Dec 6". Consecutive
+ * weeks share that Sunday (week 1's last day is week 2's first).
+ */
 export function weekRange(seasonStartsOn: string, week: number): string {
   const first = addDays(weekMonday(seasonStartsOn, week), -1);
-  const last = addDays(first, 6);
+  const last = pacificDateKey(weekDueBy(seasonStartsOn, week));
   const [, m1, d1] = first.split("-").map(Number);
   const [, m2, d2] = last.split("-").map(Number);
   return m1 === m2 ? `${MONTHS[m1 - 1]} ${d1} – ${d2}` : `${MONTHS[m1 - 1]} ${d1} – ${MONTHS[m2 - 1]} ${d2}`;

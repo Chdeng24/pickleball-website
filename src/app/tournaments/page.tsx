@@ -16,7 +16,7 @@ import { db, schema } from "@/db";
 import { formatDeadline, formatEventDay, formatEventWhen, utcToLaInputValue } from "@/lib/dates";
 import { membershipsFor, spotsTakenByLeague, teamMembers } from "@/lib/league";
 import { loadLeagueView, resultText, teamCards, type LeagueView } from "@/lib/league-view";
-import { FORFEIT_REASON, playoffRounds, regularSeasonEndsAt, scheduleBy, skipDecision, SKIP_LIMIT, weekOf } from "@/lib/schedule";
+import { currentWeek, FORFEIT_REASON, playoffRounds, regularSeasonEndsAt, scheduleBy, skipDecision, SKIP_LIMIT } from "@/lib/schedule";
 import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import { TeamCardsProvider, TeamName } from "@/components/site/team-hover";
 import {
@@ -114,7 +114,7 @@ function SpotsChip({ league, taken, now }: { league: League; taken: number; now:
 
 /** League-wide view of a live season — standings, this week's matchups, the full schedule, and the bracket. Any member can see it. */
 function LeagueLive({ league, view, highlight, now }: { league: League; view: LeagueView; highlight?: string; now: Date }) {
-  const current = view.season ? weekOf(view.season.seasonStartsOn, now) : 0;
+  const current = view.season ? currentWeek(view.season.seasonStartsOn, now) : 0;
   const thisWeek = view.weeks.includes(current) ? current : null;
   return (
     <div className="space-y-6">
@@ -143,7 +143,7 @@ function LeagueLive({ league, view, highlight, now }: { league: League; view: Le
 
 /** "Week 3 of 7 · Top 8 make playoffs · Final Sat, Dec 12" */
 function SeasonLine({ season, now }: { season: NonNullable<LeagueView["season"]>; now: Date }) {
-  const week = weekOf(season.seasonStartsOn, now);
+  const week = currentWeek(season.seasonStartsOn, now);
   let final: Date | null = null;
   try {
     final = playoffRounds(season).at(-1)?.dueBy ?? null;
