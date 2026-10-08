@@ -3,6 +3,7 @@ import { formatDeadline } from "@/lib/dates";
 import { resultText, scoreFor, type LeagueView, type ViewMatch } from "@/lib/league-view";
 import { weekRange } from "@/lib/schedule";
 import { cn } from "@/lib/utils";
+import { TeamName } from "./team-hover";
 
 /** The one league table. Gold rule under the last playoff spot. */
 export function StandingsTable({ view, playoffTeams, highlight }: { view: LeagueView; playoffTeams: number; highlight?: string }) {
@@ -31,7 +32,7 @@ export function StandingsTable({ view, playoffTeams, highlight }: { view: League
             >
               <td className="p-3 text-ink/50">{s.rank}</td>
               <td className="p-3">
-                <span className={s.teamId === highlight ? "font-bold text-navy-900" : "text-navy-900"}>{view.name(s.teamId)}</span>
+                <TeamName teamId={s.teamId} name={view.name(s.teamId)} className={s.teamId === highlight ? "font-bold text-navy-900" : "text-navy-900"} />
                 {s.tiebreak === "unresolved" && i === playoffTeams - 1 && (
                   <span className="ml-2 bg-red-600 px-1.5 py-0.5 text-[10px] font-bold uppercase text-white">Tie — exec decides</span>
                 )}
@@ -71,9 +72,11 @@ function MatchRow({
 }) {
   const bye = view.isBye(m);
   const side = (id: string | null) => (
-    <span className={cn(id === highlight ? "font-bold text-navy-900" : "text-navy-900", id === m.winnerTeamId && "underline decoration-gold-500 decoration-2 underline-offset-4")}>
-      {view.name(id)}
-    </span>
+    <TeamName
+      teamId={id}
+      name={view.name(id)}
+      className={cn(id === highlight ? "font-bold text-navy-900" : "text-navy-900", id === m.winnerTeamId && "underline decoration-gold-500 decoration-2 decoration-solid underline-offset-4")}
+    />
   );
   return (
     <li className={cn("p-3 text-sm", (m.teamAId === highlight || m.teamBId === highlight) && "bg-gold-500/10")}>
@@ -162,7 +165,7 @@ export function Bracket({ view, highlight, actions }: { view: LeagueView; highli
                     >
                       <span className={id ? "text-navy-900" : "text-ink/40"}>
                         {seed(id) ? <span className="mr-1.5 text-xs text-ink/40">{seed(id)}</span> : null}
-                        {view.name(id)}
+                        <TeamName teamId={id} name={view.name(id)} />
                       </span>
                       {id && id === m.winnerTeamId && <span className="bg-gold-500 px-1.5 py-0.5 text-[10px] font-bold uppercase text-navy-900">Win</span>}
                     </div>

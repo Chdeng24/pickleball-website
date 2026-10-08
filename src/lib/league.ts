@@ -620,6 +620,8 @@ export async function teamMembers(teamIds: string[]) {
       inviteStatus: schema.tmTeamMembers.inviteStatus,
       name: schema.users.name,
       email: schema.users.email,
+      onCompetitiveTeam: schema.users.onCompetitiveTeam,
+      derivedLevel: schema.users.derivedLevel,
     })
     .from(schema.tmTeamMembers)
     .innerJoin(schema.users, eq(schema.tmTeamMembers.memberId, schema.users.id))

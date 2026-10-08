@@ -15,9 +15,10 @@ import { isActiveMember } from "@/lib/access";
 import { db, schema } from "@/db";
 import { formatDeadline, formatEventDay, formatEventWhen, utcToLaInputValue } from "@/lib/dates";
 import { membershipsFor, spotsTakenByLeague, teamMembers } from "@/lib/league";
-import { loadLeagueView, resultText, type LeagueView } from "@/lib/league-view";
+import { loadLeagueView, resultText, teamCards, type LeagueView } from "@/lib/league-view";
 import { FORFEIT_REASON, playoffRounds, regularSeasonEndsAt, scheduleBy, skipDecision, SKIP_LIMIT, weekOf } from "@/lib/schedule";
 import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
+import { TeamCardsProvider, TeamName } from "@/components/site/team-hover";
 import {
   isRegistrationOpen,
   leagueCardState,
@@ -361,7 +362,7 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
               {view.label(m)}
               {m.id === upNext?.id && <span className="bg-gold-500 px-1.5 py-0.5 text-navy-900">Up next</span>}
             </p>
-            <p className="mt-1 text-sm font-semibold text-navy-900">{bye ? "Bye — no match this week" : `vs ${view.name(oppId)}`}</p>
+            <p className="mt-1 text-sm font-semibold text-navy-900">{bye ? "Bye — no match this week" : <>vs <TeamName teamId={oppId} name={view.name(oppId)} /></>}</p>
             {opponents.length > 0 && (
               <p className="mt-0.5 text-xs text-ink/55">
                 {opponents.map((p, i) => (
@@ -480,7 +481,7 @@ async function LeagueCard({
   const view = live ? await loadLeagueView(league) : null;
   const highlight = state.kind === "on_team" ? state.teamId : undefined;
 
-  return (
+  const card = (
     <div id={`league-${league.id}`} className="scroll-mt-24 border-2 border-navy-900/10 bg-white p-6">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-display text-lg font-extrabold uppercase text-navy-900">{league.name}</h3>
@@ -548,6 +549,8 @@ async function LeagueCard({
       )}
     </div>
   );
+  // Every team name in this league opens its card on hover or tap.
+  return view ? <TeamCardsProvider cards={teamCards(view)}>{card}</TeamCardsProvider> : card;
 }
 
 async function MemberTournamentsView({ user }: { user: SessionUser }) {
