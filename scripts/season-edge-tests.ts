@@ -49,6 +49,7 @@ import {
   withdrawTeamTx,
 } from "../src/lib/tournament";
 import { addDays, scheduleBy, shiftDeadline, weekDueBy } from "../src/lib/schedule";
+import { laInputToUtc, pacificDateKey } from "../src/lib/dates";
 import { leagueTickTx } from "../src/lib/social-league";
 
 if (!process.env.DATABASE_URL) {
@@ -350,16 +351,18 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
-    "clock: only two emails — Thu 'post a time' (skips posted/reported), Sat 9 AM 'report tonight' (skips reported), each once",
+    "clock: only two emails — Thu 'post a time' (skips posted/reported), Sun 9 AM 'report tonight' (skips reported), each once",
     async (tx) => {
       const league = await makeLeague(tx);
       await makeTeams(tx, league.id, 7); // 8 slots, 1 open → one bye + 3 real matches a week
       const exec = await makeUser(tx);
       await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
       await publishDrawTx(tx, league.id);
-      // due1 is Saturday 11:59:59 PM of week 1; offsets below are from there.
+      // due1 is the Sunday 11:59 PM after week 1; offsets below are Pacific calendar days back from the
+      // Saturday 11:59 PM before it — not 24h blocks, which drift an hour when the week crosses a DST change.
       const due1 = weekDueBy(START, 1);
-      const at = (days: number, hours: number) => new Date(due1.getTime() - days * 86_400_000 + hours * 3_600_000);
+      const at = (days: number, hours: number) =>
+        new Date(laInputToUtc(`${addDays(pacificDateKey(due1), -(days + 1))}T23:59`).getTime() + hours * 3_600_000);
 
       assert.equal((await leagueTickTx(tx, league.id, at(6, 9))).outbox.length, 0, "no Monday email");
 
@@ -374,13 +377,14 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       assert.ok(thu.outbox.every((m) => m.subject.includes("post your match time")));
       assert.equal((await leagueTickTx(tx, league.id, at(3, 1))).reminderEmails, 0);
 
-      const sat = await leagueTickTx(tx, league.id, at(0, -14)); // Sat ~10 AM
-      assert.equal(sat.reportEmails, 8, "both unreported matches, posted or not");
-      assert.equal((await leagueTickTx(tx, league.id, at(0, -14))).reportEmails, 0);
+      assert.equal((await leagueTickTx(tx, league.id, at(0, -14))).reportEmails, 0, "Saturday is no longer the deadline day");
+      const sun = await leagueTickTx(tx, league.id, at(-1, -14)); // Sun ~10 AM
+      assert.equal(sun.reportEmails, 8, "both unreported matches, posted or not");
+      assert.equal((await leagueTickTx(tx, league.id, at(-1, -14))).reportEmails, 0);
     },
   ],
   [
-    "clock: unreported → double forfeit Sunday morning; a makeup not played → the team that missed week 1 forfeits a week later",
+    "clock: unreported → double forfeit Monday morning; a makeup not played → the team that missed week 1 forfeits a week later",
     async (tx) => {
       const league = await makeLeague(tx);
       await makeTeams(tx, league.id, 4);
@@ -392,7 +396,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
         .set({ extendedForTeamId: away.teamAId, dueBy: shiftDeadline(away.dueBy!, 1) })
         .where(eq(schema.matches.id, away.id));
 
-      const mondayAfter = (w: number) => new Date(weekDueBy(START, w).getTime() + 11 * 3_600_000); // Sunday ~11 AM
+      const mondayAfter = (w: number) => new Date(weekDueBy(START, w).getTime() + 11 * 3_600_000); // Monday ~11 AM
       const r1 = await leagueTickTx(tx, league.id, mondayAfter(1));
       assert.equal(r1.settled, 1);
       const [n1] = await tx.select().from(schema.matches).where(eq(schema.matches.id, normal.id));
@@ -419,7 +423,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       const [b1] = await roster(m1.teamBId!);
       const outsider = (await roster(m2.teamAId!))[0];
       const due = weekDueBy(START, 1);
-      const tue = new Date(due.getTime() - 4 * 86_400_000);
+      const tue = new Date(due.getTime() - 5 * 86_400_000);
 
       // Nothing works until the schedule is published.
       await rejects(sp(tx, (t) => postMatchTimeTx(t, { userId: a1, matchId: m1.id, when: tue, note: "" })), LeagueError, /isn't being played/);
@@ -568,7 +572,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       const [player] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, team))).map((r) => r.memberId);
       const mine = (w: number) => ms.find((m) => m.round === w && (m.teamAId === team || m.teamBId === team))!;
       const other = (m: (typeof ms)[number]) => (m.teamAId === team ? m.teamBId! : m.teamAId!);
-      const inWeek = (w: number) => new Date(weekDueBy(START, w).getTime() - 4 * 86_400_000); // Tuesday night
+      const inWeek = (w: number) => new Date(weekDueBy(START, w).getTime() - 5 * 86_400_000); // Tuesday night
       const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
 
       // Week 1: first skip → makeup due week 2.

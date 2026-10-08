@@ -211,7 +211,7 @@ export async function skipMatch(matchId: string, expect: "makeup" | "forfeit"): 
     return { ok: true, message: `Recorded as a forfeit — ${result.mail.otherTeam} gets the win. Everyone in the match was emailed.` };
   }
   await sendMany(result.notify.map((p) => outOfTownEmail(p, result.mail)));
-  return { ok: true, message: "Done — it's now a makeup due next Saturday. That was your team's one skip for the season. Your opponents were emailed." };
+  return { ok: true, message: "Done — it's now a makeup due next Sunday. That was your team's one skip for the season. Your opponents were emailed." };
 }
 
 const postTimeSchema = z.object({

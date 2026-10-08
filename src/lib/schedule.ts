@@ -5,7 +5,7 @@
  * The season is a weekly round robin: every team plays exactly one match a
  * week against a different opponent, for `roundRobinWeeks` weeks. Each week
  * has two cut-offs: post when you're playing by Wednesday 11:59 PM, and
- * report the score by Saturday 11:59 PM.
+ * play and report the score by the Sunday after the week, 11:59 PM.
  * The whole league is one table — not pools — so with an even number of
  * slots nobody ever sits out a week.
  *
@@ -134,9 +134,13 @@ export function weekMonday(seasonStartsOn: string, week: number): string {
   return addDays(seasonStartsOn, 7 * (week - 1));
 }
 
-/** Saturday 11:59 PM Pacific of a season week — the score-reporting deadline for that week's match. */
+/**
+ * Sunday 11:59 PM Pacific right after a season week (Sun–Sat) — the deadline to
+ * play and report that week's match. It's the first day of the next week, so a
+ * team that couldn't get together during the week still has the weekend.
+ */
 export function weekDueBy(seasonStartsOn: string, week: number): Date {
-  return laDeadlineToUtc(`${addDays(weekMonday(seasonStartsOn, week), 5)}T23:59`);
+  return laDeadlineToUtc(`${addDays(weekMonday(seasonStartsOn, week), 6)}T23:59`);
 }
 
 /** Monday of the calendar week (Mon–Sun) a date key falls in. */
@@ -156,17 +160,17 @@ export function shiftDeadline(dueBy: Date, weeks: number): Date {
   return laDeadlineToUtc(`${addDays(pacificDateKey(dueBy), 7 * weeks)}T23:59`);
 }
 
-/** Wednesday 11:59 PM of the match's week — the cut-off for posting when the match will be played. */
+/** Wednesday 11:59 PM of the match's week — the cut-off for posting when the match will be played. A Sunday deadline belongs to the Mon–Sun run before it, so this is the Wednesday before. */
 export function scheduleBy(dueBy: Date): Date {
   return laDeadlineToUtc(`${addDays(mondayOf(pacificDateKey(dueBy)), 2)}T23:59`);
 }
 
-/** Saturday 9 AM of the match's week (or the morning of an earlier deadline) — "report your score by tonight". */
+/** 9 AM on the deadline day (Sunday, or a Thursday playoff deadline) — "report your score by tonight". */
 export function reportReminderAt(dueBy: Date): Date {
   return laInputToUtc(`${pacificDateKey(dueBy)}T09:00`);
 }
 
-/** Unplayed matches are settled this long after the Saturday deadline (Sunday ~10 AM), so a late-night report still counts. */
+/** Unplayed matches are settled this long after the Sunday deadline (Monday ~10 AM), so a late-night report still counts. */
 export const OVERDUE_GRACE_MS = 10 * 60 * 60 * 1000;
 
 /**
@@ -306,7 +310,7 @@ export type SkipDecision =
  * "We can't make it this week" (sick, out of town). What tapping it does for
  * this team on this match:
  *
- *   - their first skip of the season → the match becomes a makeup due next Saturday
+ *   - their first skip of the season → the match becomes a makeup due a week later
  *   - any skip after that            → they forfeit it, right away
  *   - they can't make their own makeup → they forfeit it (the original rule)
  *   - no week left before playoffs   → they forfeit it
@@ -359,7 +363,7 @@ export function overdueOutcome(m: { teamAId: string; teamBId: string; extendedFo
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** A season week, Sunday to Saturday (the score deadline): "Oct 4 – 10" or "Nov 29 – Dec 5" */
+/** A season week, Sunday to Saturday (its match is due the Sunday after): "Oct 4 – 10" or "Nov 29 – Dec 5" */
 export function weekRange(seasonStartsOn: string, week: number): string {
   const first = addDays(weekMonday(seasonStartsOn, week), -1);
   const last = addDays(first, 6);

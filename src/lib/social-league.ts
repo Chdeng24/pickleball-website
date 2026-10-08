@@ -14,10 +14,10 @@ import { seasonConfig, settleMatchTx } from "@/lib/tournament";
  * missed run is caught up by the next.
  *
  *   1. Auto-confirm scores whose dispute window has closed (advancing playoff winners).
- *   2. Sunday ~10 AM: settle the week's unreported round-robin matches
+ *   2. Monday ~10 AM: settle the week's unreported round-robin matches
  *      (makeup not played → the team that missed the original week forfeits; otherwise double forfeit).
  *   3. After Wednesday 11:59 PM: "post your match time" to both teams if nobody has.
- *   4. Saturday 9 AM: "report your score by tonight" to both teams if it's still unreported.
+ *   4. Sunday 9 AM: "report your score by tonight" to both teams if it's still unreported.
  *
  * Those two are the only recurring emails — by design, to keep inboxes quiet.
  */

@@ -195,7 +195,7 @@ export function SkipButton({
         </p>
       ) : (
         <p className="text-sm text-navy-900">
-          This uses your team&apos;s <strong>one skip for the season</strong>. The match becomes a makeup due next Saturday and your
+          This uses your team&apos;s <strong>one skip for the season</strong>. The match becomes a makeup due next Sunday and your
           opponents are emailed. If the makeup doesn&apos;t happen, your team forfeits it — and any skip after this is a forfeit.
         </p>
       )}

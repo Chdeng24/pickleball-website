@@ -289,7 +289,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
       {isLive && noTime.length > 0 && (
         <section className="space-y-2">
           <Heading tone="alert">Missed Wednesday&apos;s cut-off — no match time posted ({noTime.length})</Heading>
-          <p className="text-xs text-ink/45">Both teams were emailed Thursday morning. These still have until Saturday 11:59 PM to play and report.</p>
+          <p className="text-xs text-ink/45">Both teams were emailed Thursday morning. These still have until Sunday 11:59 PM to play and report.</p>
           <ul className="divide-y divide-red-100 border-2 border-red-200 bg-white">
             {noTime.map((m) => (
               <li key={m.id} className="p-3 text-sm text-navy-900">

@@ -119,7 +119,7 @@ export async function skipsUsedTx(tx: Tx, tournamentId: string, teamId: string):
 
 /**
  * "We can't make it this week" (sick, out of town). The team's first skip of
- * the season turns the match into a makeup due next Saturday; every skip
+ * the season turns the match into a makeup due a week later; every skip
  * after that — or not making their own makeup, or a week with no makeup week
  * left — is an immediate forfeit to the other team. See schedule.ts skipDecision.
  */

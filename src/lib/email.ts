@@ -269,7 +269,7 @@ export function noTimePostedEmail(to: Recipient, d: { tournamentName: string; te
       `${hey(to)}
        <p>The Wednesday cut-off passed and nobody has posted when <strong>${esc(d.teamName)}</strong> is playing:</p>
        ${d.matches.map(matchBox).join("")}
-       <p>Lock in a time with your opponents on Slack, post it on the site, and play and report by Saturday 11:59 PM.
+       <p>Lock in a time with your opponents on Slack, post it on the site, and play and report by Sunday 11:59 PM.
        Sick or out of town? Let your opponents know and tap <strong>Can't make it this week</strong> — it becomes a makeup next week.</p>
        <p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.noShowRule)}</p>
        ${button(`${club.url}/tournaments`, "Post a time")}`,
@@ -277,7 +277,7 @@ export function noTimePostedEmail(to: Recipient, d: { tournamentName: string; te
   };
 }
 
-/** Saturday morning: the score is due tonight. */
+/** Deadline morning (Sunday): the score is due tonight. */
 export function reportTonightEmail(to: Recipient, d: { tournamentName: string; teamName: string; matches: MatchLine[] }): Message {
   return {
     to: to.email,

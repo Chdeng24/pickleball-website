@@ -209,7 +209,7 @@ export const leagueSteps = [
   {
     icon: "clipboard",
     title: "Report the score",
-    body: "Any of the four players reports it by Saturday night. Sick or out of town? Each team gets one skip a season — the match becomes a makeup the next week. Standings update live.",
+    body: "Any of the four players reports it by Sunday night — you get the whole weekend to play. Sick or out of town? Each team gets one skip a season — the match becomes a makeup the next week. Standings update live.",
   },
   {
     icon: "trophy",
@@ -224,11 +224,11 @@ export const leagueInfo = {
   courtBookingUrl: "https://shop.rs.berkeley.edu/booking/164d5765-6775-46d4-ad51-2c9f51027a2d",
   courtBookingNote: "Courts open for reservation 72 hours ahead, on a rolling basis.",
   weekRule:
-    "Each week: post when you're playing by Wednesday 11:59 PM, and report the score by Saturday 11:59 PM. Only one of the four players needs to do either.",
+    "Each week: post when you're playing by Wednesday 11:59 PM, and play and report the score by Sunday 11:59 PM (the Sunday right after the week). Only one of the four players needs to do either.",
   outOfTownRule:
-    "Sick or out of town? Each team gets ONE skip per season: tap \"Can't make it this week\" before Saturday's deadline and the match becomes a makeup due the next Saturday. If the makeup doesn't happen, the team that skipped forfeits. Every skip after the first is an automatic forfeit.",
+    "Sick or out of town? Each team gets ONE skip per season: tap \"Can't make it this week\" before Sunday's deadline and the match becomes a makeup due the next Sunday. If the makeup doesn't happen, the team that skipped forfeits. Every skip after the first is an automatic forfeit.",
   noShowRule:
-    "A match nobody reports by Saturday counts as a double forfeit — neither team gets the win. If one team just didn't respond, tell exec and they'll award the win. The no-show strike policy applies, including not letting your opponents know you can't play that week.",
+    "A match nobody reports by Sunday counts as a double forfeit — neither team gets the win. If one team just didn't respond, tell exec and they'll award the win. The no-show strike policy applies, including not letting your opponents know you can't play that week.",
   scoreRule: "Best of 3, games to 11, win by 2. Any player reports; the other team can confirm or dispute it.",
 };
 

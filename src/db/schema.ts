@@ -331,7 +331,7 @@ export const matches = pgTable("match", {
   /** Free text with the time, e.g. "Court 3" or "Clark Kerr". */
   scheduledNote: text("scheduled_note"),
   scheduledBy: uuid("scheduled_by").references(() => users.id, { onDelete: "set null" }),
-  /** The Saturday-morning "report your score by tonight" email went out. Cleared on a makeup. */
+  /** The deadline-morning (Sunday) "report your score by tonight" email went out. Cleared on a makeup. */
   reportReminderSentAt: timestamp("report_reminder_sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
