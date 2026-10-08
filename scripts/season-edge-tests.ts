@@ -34,6 +34,7 @@ import {
   confirmScoreTx,
   disputeScoreTx,
   skipMatchTx,
+  skipsUsedTx,
   postMatchTimeTx,
   reportScoreTx,
   resolveDisputeTx,
@@ -611,6 +612,48 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
 
       // Past the deadline: nothing.
       await rejects(sp(tx, (t) => skipMatchTx(t, { userId: player, matchId: mine(4).id, now: new Date(weekDueBy(START, 4).getTime() + 60_000), expect: "forfeit" })), LeagueError, /deadline has passed/);
+    },
+  ],
+  [
+    "the skip belongs to the team: partners share one; the opponent is never charged or punished for it",
+    async (tx) => {
+      const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
+      const teams = await makeTeams(tx, league.id, 10);
+      await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
+      await publishDrawTx(tx, league.id);
+      const ms = await poolMatches(tx, league.id);
+      const roster = async (teamId: string) =>
+        (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teamId))).map((r) => r.memberId);
+      const weekOfTeam = (teamId: string, w: number) => ms.find((m) => m.round === w && (m.teamAId === teamId || m.teamBId === teamId))!;
+      const inWeek = (w: number) => new Date(weekDueBy(START, w).getTime() - 5 * 86_400_000); // Tuesday night
+      const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
+
+      const team = teams[0];
+      const [p1, p2] = await roster(team);
+      const w1 = weekOfTeam(team, 1);
+      const opp = w1.teamAId === team ? w1.teamBId! : w1.teamAId!;
+      const [oppPlayer] = await roster(opp);
+
+      // One partner uses the team's skip...
+      assert.equal((await skipMatchTx(tx, { userId: p1, matchId: w1.id, now: inWeek(1), expect: "makeup" })).outcome, "makeup");
+      assert.equal(await skipsUsedTx(tx, league.id, team), 1);
+      // ...so the other partner has none left: their skip on another week is a forfeit, not a second makeup.
+      const w2 = weekOfTeam(team, 2);
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: p2, matchId: w2.id, now: inWeek(2), expect: "makeup" })), LeagueError, /skip was just used/);
+      const f = await skipMatchTx(tx, { userId: p2, matchId: w2.id, now: inWeek(2), expect: "forfeit" });
+      assert.equal(f.outcome === "forfeit" && f.reason, "skip_used");
+      assert.equal(await skipsUsedTx(tx, league.id, team), 1, "a forfeit doesn't count as a skip either");
+
+      // The opponent: their skip count is untouched, and there's nothing for them to do on the makeup.
+      assert.equal(await skipsUsedTx(tx, league.id, opp), 0);
+      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: oppPlayer, matchId: w1.id, now: inWeek(2), expect: "makeup" })), LeagueError, /other team's makeup/);
+      assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).extendedForTeamId], ["pending", team]);
+      // They still have their own skip for their own week.
+      assert.equal((await skipMatchTx(tx, { userId: oppPlayer, matchId: weekOfTeam(opp, 3).id, now: inWeek(3), expect: "makeup" })).outcome, "makeup");
+
+      // Makeup never played: the team that skipped forfeits — the opponent gets the win, not a double forfeit.
+      await leagueTickTx(tx, league.id, new Date(weekDueBy(START, 2).getTime() + 30 * 3_600_000));
+      assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).winnerTeamId], ["forfeited", opp]);
     },
   ],
 ];

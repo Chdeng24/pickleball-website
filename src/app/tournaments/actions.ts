@@ -210,7 +210,7 @@ export async function skipMatch(matchId: string, expect: "makeup" | "forfeit"): 
     await sendMany(result.notify.map((p) => skipForfeitEmail(p, result.mail)));
     return { ok: true, message: `Recorded as a forfeit — ${result.mail.otherTeam} gets the win. Everyone in the match was emailed.` };
   }
-  await sendMany(result.notify.map((p) => outOfTownEmail(p, result.mail)));
+  await sendMany(result.notify.map((p) => outOfTownEmail(p, { ...result.mail, toOpponent: p.teamId !== result.mail.requestingTeamId })));
   return { ok: true, message: "Done — it's now a makeup due next Sunday. That was your team's one skip for the season. Your opponents were emailed." };
 }
 

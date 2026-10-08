@@ -164,7 +164,7 @@ export async function skipMatchTx(
   return {
     outcome: "makeup" as const,
     notify,
-    mail: { tournamentName: tournament.name, requestingTeam: teamName, otherTeam, newDueBy },
+    mail: { tournamentName: tournament.name, requestingTeam: teamName, requestingTeamId: me.teamId, otherTeam, newDueBy },
   };
 }
 

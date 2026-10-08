@@ -297,7 +297,7 @@ export function reportTonightEmail(to: Recipient, d: { tournamentName: string; t
 /** Someone in the match said their team can't make it this week — the match moved to a makeup week. */
 export function outOfTownEmail(
   to: Recipient,
-  d: { tournamentName: string; requestingTeam: string; otherTeam: string; newDueBy: Date },
+  d: { tournamentName: string; requestingTeam: string; otherTeam: string; newDueBy: Date; toOpponent: boolean },
 ): Message {
   return {
     to: to.email,
@@ -307,8 +307,12 @@ export function outOfTownEmail(
       `${hey(to)}
        <p><strong>${esc(d.requestingTeam)}</strong> can't make it this week, so their match against
        <strong>${esc(d.otherTeam)}</strong> is now a makeup, due <strong>${esc(formatDeadline(d.newDueBy))}</strong>.</p>
-       <p>That week you'll have this makeup plus your regular match — post a time for it by Wednesday like any other.
-       If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it. (That was their one skip for the season.)</p>
+       <p>That week you'll have this makeup plus your regular match — post a time for it by Wednesday like any other.</p>
+       ${
+         d.toOpponent
+           ? `<p>This doesn't use your team's skip, and your team isn't penalized: if the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it and <strong>you get the win</strong>.</p>`
+           : `<p>That was your team's one skip for the season. If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it, and any skip after this is a forfeit.</p>`
+       }
        ${button(`${club.url}/tournaments`, "See your schedule")}`,
     ),
   };
