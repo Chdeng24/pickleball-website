@@ -27,15 +27,16 @@ export function PracticeSchedule() {
 async function LiveCards() {
   await connection(); // the date and the spot counts are per request, never baked in at build
   const now = new Date();
-  return <Cards when={upcomingSaturday(now)} spots={await openPlaySpots(now)} />;
+  const when = Object.fromEntries(practices.map((p) => [p.id, upcomingSaturday(now, p.endsAt)]));
+  return <Cards when={when} spots={await openPlaySpots(now)} />;
 }
 
-function Cards({ when, spots }: { when: string | null; spots: Record<Practice["level"], OpenPlaySpots | null> | null }) {
+function Cards({ when, spots }: { when: Record<string, string> | null; spots: Record<Practice["level"], OpenPlaySpots | null> | null }) {
   return (
     <div className="mt-14 grid gap-6 md:grid-cols-2">
       {practices.map((p, i) => (
         <Reveal key={p.id} delay={i * 0.1}>
-          <PracticeCard practice={p} when={when} spots={spots ? spots[p.level] : undefined} />
+          <PracticeCard practice={p} when={when?.[p.id] ?? null} spots={spots ? spots[p.level] : undefined} />
         </Reveal>
       ))}
     </div>

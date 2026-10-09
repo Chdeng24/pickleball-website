@@ -42,6 +42,8 @@ export type Practice = {
   title: string;
   /** Shown with the upcoming Saturday's date. */
   time: string;
+  /** Pacific "HH:MM" it ends — the card rolls to next Saturday after this. */
+  endsAt: string;
   location: string;
   capacity: number;
   note: string;
@@ -55,6 +57,7 @@ export const practices: Practice[] = [
     label: "Beginner",
     title: "Beginner Open Play",
     time: "12–2 PM",
+    endsAt: "14:00",
     location: venue.short,
     capacity: 20,
     note: "Open play.",
@@ -64,7 +67,8 @@ export const practices: Practice[] = [
     level: "advanced",
     label: "Advanced",
     title: "Advanced Open Play",
-    time: "12–2 PM",
+    time: "2–4 PM",
+    endsAt: "16:00",
     location: venue.short,
     capacity: 20,
     note: "Open play.",
@@ -260,8 +264,8 @@ export const albums: Record<"club" | "social", AlbumPhoto[]> = {
 
 /** Current sponsors. Logos live in public/media/sponsors/ — trimmed, on a white background. */
 export const sponsors: { name: string; logo: string; width: number; height: number; url: string | null }[] = [
-  { name: "RPM", logo: "/media/sponsors/rpm.png", width: 800, height: 267, url: null },
-  { name: "Centerline", logo: "/media/sponsors/centerline.png", width: 748, height: 80, url: null },
+  { name: "RPM", logo: "/media/sponsors/rpm.png", width: 800, height: 267, url: "https://rpmpb.com" },
+  { name: "Centerline", logo: "/media/sponsors/centerline.png", width: 748, height: 80, url: "https://centerlineathletics.com" },
 ];
 
 export const sponsorPitch = {

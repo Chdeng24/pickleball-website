@@ -75,6 +75,9 @@ test("upcomingSaturday: this Saturday until open play ends at 2 PM, then next we
   assert.equal(upcomingSaturday(new Date("2026-10-11T09:00:00-07:00")), "Sat, Oct 17"); // Sunday
   // Late Friday night in Berkeley is already Saturday in UTC — still Pacific's Saturday.
   assert.equal(upcomingSaturday(new Date("2026-10-09T23:30:00-07:00")), "Sat, Oct 10");
+  // A later session (Advanced, 2–4 PM) stays on today until it ends.
+  assert.equal(upcomingSaturday(new Date("2026-10-10T15:00:00-07:00"), "16:00"), "Sat, Oct 10");
+  assert.equal(upcomingSaturday(new Date("2026-10-10T16:00:00-07:00"), "16:00"), "Sat, Oct 17");
   // Across the DST change and a month boundary.
   assert.equal(upcomingSaturday(new Date("2026-10-31T15:00:00-07:00")), "Sat, Nov 7");
 });
