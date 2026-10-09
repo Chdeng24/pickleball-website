@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  upcomingSaturday,
   laInputToUtc,
   utcToLaInputValue,
   formatEventWhen,
@@ -64,4 +65,16 @@ test("pacificDateKey agrees across two events on the same Pacific day", () => {
   const morning = laInputToUtc("2026-03-10T08:00");
   const night = laInputToUtc("2026-03-10T22:00");
   assert.equal(pacificDateKey(morning), pacificDateKey(night));
+});
+
+test("upcomingSaturday: this Saturday until open play ends at 2 PM, then next week's", () => {
+  assert.equal(upcomingSaturday(new Date("2026-10-08T20:00:00-07:00")), "Sat, Oct 10"); // Thursday
+  assert.equal(upcomingSaturday(new Date("2026-10-10T11:00:00-07:00")), "Sat, Oct 10"); // Saturday morning
+  assert.equal(upcomingSaturday(new Date("2026-10-10T13:59:00-07:00")), "Sat, Oct 10");
+  assert.equal(upcomingSaturday(new Date("2026-10-10T14:00:00-07:00")), "Sat, Oct 17"); // over
+  assert.equal(upcomingSaturday(new Date("2026-10-11T09:00:00-07:00")), "Sat, Oct 17"); // Sunday
+  // Late Friday night in Berkeley is already Saturday in UTC — still Pacific's Saturday.
+  assert.equal(upcomingSaturday(new Date("2026-10-09T23:30:00-07:00")), "Sat, Oct 10");
+  // Across the DST change and a month boundary.
+  assert.equal(upcomingSaturday(new Date("2026-10-31T15:00:00-07:00")), "Sat, Nov 7");
 });

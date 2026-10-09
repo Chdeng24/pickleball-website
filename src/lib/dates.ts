@@ -148,3 +148,18 @@ export function utcToLaInputValue(date: Date): string {
   );
   return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
 }
+
+/**
+ * The Saturday the next open play falls on — "Sat, Oct 10". It stays today's
+ * date on a Saturday until `endsAt` (Pacific), then rolls to next week's.
+ */
+export function upcomingSaturday(now: Date, endsAt = "14:00"): string {
+  const today = pacificDateKey(now);
+  const [y, m, d] = today.split("-").map(Number);
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
+  const stillToday = dow === 6 && now < laInputToUtc(`${today}T${endsAt}`);
+  const ahead = stillToday ? 0 : (6 - dow + 7) % 7 || 7;
+  return new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" }).format(
+    new Date(Date.UTC(y, m - 1, d + ahead, 12)),
+  );
+}

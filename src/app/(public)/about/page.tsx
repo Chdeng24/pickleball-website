@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { Section } from "@/components/site/section";
 import { OfficerPhoto } from "@/components/site/officer-photo";
-import { TeamGallery } from "@/components/site/team-gallery";
+import { PhotoAlbum } from "@/components/site/photo-album";
 import { Reveal } from "@/components/ui/reveal";
-import { club, officers } from "@/lib/content";
+import { albums, club, officers } from "@/lib/content";
 
 export const metadata: Metadata = { title: "About" };
 
@@ -20,7 +20,7 @@ export default function AboutPage() {
 
       <Section tone="chalk" kicker="On the courts" title="The album">
         <div className="mt-10">
-          <TeamGallery />
+          <PhotoAlbum photos={albums.club} label="Club photo album" />
         </div>
       </Section>
 

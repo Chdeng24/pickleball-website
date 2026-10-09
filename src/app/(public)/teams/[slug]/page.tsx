@@ -4,8 +4,8 @@ import { Check } from "lucide-react";
 import { Section } from "@/components/site/section";
 import { PracticeSchedule } from "@/components/site/practice-schedule";
 import { JoinCta } from "@/components/site/join-cta";
-import { TeamGallery } from "@/components/site/team-gallery";
-import { teams } from "@/lib/content";
+import { PhotoAlbum } from "@/components/site/photo-album";
+import { albums, teams } from "@/lib/content";
 
 export function generateStaticParams() {
   return teams.map((t) => ({ slug: t.slug }));
@@ -47,7 +47,7 @@ export default async function TeamPage({ params }: PageProps<"/teams/[slug]">) {
         <Section
           kicker="Every week"
           title="Practice schedule"
-          lead="Two practices, split by level, capped by court space."
+          lead="Saturday open play, split by level, capped by court space."
         >
           <PracticeSchedule />
         </Section>
@@ -55,7 +55,10 @@ export default async function TeamPage({ params }: PageProps<"/teams/[slug]">) {
 
       <Section tone="chalk" kicker="On the courts" title="The album">
         <div className="mt-10">
-          <TeamGallery />
+          <PhotoAlbum
+            photos={team.slug === "social" ? albums.social : albums.club}
+            label={`${team.name} photo album`}
+          />
         </div>
       </Section>
 

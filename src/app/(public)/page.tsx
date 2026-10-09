@@ -23,9 +23,9 @@ export default function HomePage() {
             <div className="space-y-6 text-lg leading-relaxed text-ink/70">
               <p>{club.blurb}</p>
               <p>
-                We run two capped practices every week so nobody stands around
-                waiting for a court, plus socials, fundraisers, and tournaments
-                that fill out the semester.
+                We run capped open play every Saturday, split by level, so nobody
+                stands around waiting for a court, plus socials, fundraisers, and
+                tournaments that fill out the semester.
               </p>
               <p>
                 Everything runs through this site — verified Berkeley logins,
@@ -69,7 +69,7 @@ export default function HomePage() {
       <Section
         kicker="Every week"
         title="Weekly practices"
-        lead="Two practices, split by level, capped by court space."
+        lead="Saturday open play, split by level, capped by court space."
       >
         <PracticeSchedule />
       </Section>

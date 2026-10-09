@@ -36,38 +36,38 @@ export const venue = {
 
 export type Practice = {
   id: string;
-  team: "social" | "competitive";
+  /** Matches the practice events exec posts — used to find this week's spots left. */
+  level: "beginner" | "advanced";
+  label: string;
   title: string;
-  level: string;
-  day: string;
+  /** Shown with the upcoming Saturday's date. */
   time: string;
   location: string;
   capacity: number;
   note: string;
 };
 
+/** Social Team open play — every Saturday. The cards always show the upcoming Saturday. */
 export const practices: Practice[] = [
   {
     id: "beginner",
-    team: "social",
-    title: "Beginner / Social Practice",
-    level: "Beginner",
-    day: "TODO — day", // TODO: confirm day
-    time: "TODO — time", // TODO: confirm time
+    level: "beginner",
+    label: "Beginner",
+    title: "Beginner Open Play",
+    time: "12–2 PM",
     location: venue.short,
     capacity: 20,
-    note: "Drills, basics, and open play. No experience needed — paddles provided.",
+    note: "Open play.",
   },
   {
     id: "advanced",
-    team: "social",
-    title: "Advanced Practice",
-    level: "Advanced",
-    day: "TODO — day", // TODO: confirm day
-    time: "TODO — time", // TODO: confirm time
+    level: "advanced",
+    label: "Advanced",
+    title: "Advanced Open Play",
+    time: "12–2 PM",
     location: venue.short,
     capacity: 20,
-    note: "Faster-paced drilling and competitive games. Bring your own paddle.",
+    note: "Open play.",
   },
 ];
 
@@ -77,9 +77,9 @@ export const teams = [
     name: "Social Team",
     kicker: "Open to everyone",
     description:
-      "Our largest community — 150+ members who play twice a week, hit socials, and keep things low-pressure. No tryouts, no experience required. Just show up, RSVP, and play.",
+      "Our largest community — 150+ members who play every Saturday, hit socials, and keep things low-pressure. No tryouts, no experience required. Just show up, RSVP, and play.",
     highlights: [
-      "Two weekly practices, beginner and advanced",
+      "Saturday open play, beginner and advanced",
       "Semester-long Pickleball League doubles tournament",
       "Socials, fundraisers, and one-day tournaments",
       "First 20 to RSVP get a spot — court capacity",
@@ -242,12 +242,27 @@ export const officers = [
   { name: "Caleb Deng", role: "Social Team Director", year: "Junior", photo: null },
 ];
 
+export type AlbumPhoto = { src: string; alt: string; caption: string; width: number; height: number };
+
 /**
- * Team/event photo album on the About page. Empty until you add some — to
- * add one: drop the image file in `public/media/gallery/`, then add a line
- * here, e.g. { src: "/media/gallery/fall-social.jpg", alt: "Fall social at Clark Kerr" }.
+ * Photo albums. To add a photo: drop a JPEG in `public/media/albums/<album>/`
+ * (2000px on the long edge is plenty — strip location data first), then add a
+ * line here with its pixel size. The first photo leads the carousel.
  */
-export const galleryPhotos: { src: string; alt: string }[] = [];
+export const albums: Record<"club" | "social", AlbumPhoto[]> = {
+  /** Exec and tournament wins — About page and Comp Team page. */
+  club: [
+    { src: "/media/albums/club/nationals-bid.jpg", alt: "Berkeley players holding a DUPR Nationals Bid Winner sign under a Champions banner", caption: "Nationals bid winners · The Hub Silicon Valley", width: 1500, height: 2000 },
+    { src: "/media/albums/club/gameday.jpg", alt: "Berkeley team lined up on an indoor court at Gameday CBD", caption: "The team at Gameday CBD", width: 1500, height: 2000 },
+    { src: "/media/albums/club/outdoor-team.jpg", alt: "Club members posing together at the net on an outdoor court", caption: "The crew, courtside", width: 2000, height: 1500 },
+    { src: "/media/albums/club/rooftop-club.jpg", alt: "Members standing beside the Pickleball at Berkeley banner on a rooftop court", caption: "Flying the banner on the rooftop courts", width: 2000, height: 1500 },
+    { src: "/media/albums/club/rooftop-exec.jpg", alt: "Exec members arm in arm on a rooftop court", caption: "Exec on the rooftop courts", width: 1500, height: 2000 },
+  ],
+  /** Saturday open play — Social Team page. */
+  social: [
+    { src: "/media/albums/social/open-play.jpg", alt: "Players with paddles lined up at the Clark Kerr courts", caption: "Saturday open play at Clark Kerr", width: 1024, height: 768 },
+  ],
+};
 
 // TODO: replace with real sponsors as they come in
 export const sponsors = [
