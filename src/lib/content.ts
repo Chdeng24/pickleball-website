@@ -233,13 +233,13 @@ export const leagueInfo = {
 };
 
 export const officers = [
-  { name: "Sienna Lam", role: "President", year: "Senior", photo: null },
-  { name: "Jason Piech", role: "VP of External", year: "Sophomore", photo: null },
-  { name: "Eric Liang", role: "VP of Partnerships", year: "Senior", photo: null },
-  { name: "Will Chang", role: "Tournament Director", year: "Senior", photo: null },
-  { name: "Vinay Palta", role: "Social Media Director", year: "Sophomore", photo: null },
+  { name: "Sienna Lam", role: "President", year: "Senior", photo: "/media/officers/sienna.jpg" },
+  { name: "Jason Piech", role: "VP of External", year: "Sophomore", photo: "/media/officers/jason.jpg" },
+  { name: "Eric Liang", role: "VP of Partnerships", year: "Senior", photo: "/media/officers/eric.jpg" },
+  { name: "Will Chang", role: "Tournament Director", year: "Senior", photo: "/media/officers/will.jpg" },
+  { name: "Vinay Palta", role: "Social Media Director", year: "Sophomore", photo: "/media/officers/vinay.jpg" },
   { name: "Kiara Eng", role: "VP of Internal", year: "Junior", photo: null },
-  { name: "Caleb Deng", role: "Social Team Director", year: "Junior", photo: null },
+  { name: "Caleb Deng", role: "Social Team Director", year: "Junior", photo: "/media/officers/caleb.jpg" },
 ];
 
 export type AlbumPhoto = { src: string; alt: string; caption: string; width: number; height: number };
@@ -260,7 +260,9 @@ export const albums: Record<"club" | "social", AlbumPhoto[]> = {
   ],
   /** Saturday open play — Social Team page. */
   social: [
-    { src: "/media/albums/social/open-play.jpg", alt: "Players with paddles lined up at the Clark Kerr courts", caption: "Saturday open play at Clark Kerr", width: 1024, height: 768 },
+    { src: "/media/albums/social/open-play-2.jpg", alt: "Smiling players holding up their paddles behind the net at an outdoor court", caption: "Saturday open play", width: 2000, height: 1500 },
+    { src: "/media/albums/social/open-play-3.jpg", alt: "Seven players with paddles lined up behind the net at an outdoor court", caption: "Paddles up", width: 2000, height: 1500 },
+    { src: "/media/albums/social/open-play.jpg", alt: "Players with paddles lined up on a sunny outdoor court", caption: "The open play crew", width: 1024, height: 768 },
   ],
 };
 
