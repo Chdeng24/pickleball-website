@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { ArrowRight } from "lucide-react";
 import { sponsors, sponsorPitch } from "@/lib/content";
 import { Reveal } from "@/components/ui/reveal";
@@ -6,18 +7,29 @@ import { Button } from "@/components/ui/button";
 export function SponsorWall() {
   return (
     <>
-      <div className="mt-14 grid grid-cols-2 gap-px bg-white/10 lg:grid-cols-4">
-        {sponsors.map((s, i) => (
-          <div
-            key={`${s.name}-${i}`}
-            className="flex aspect-[3/2] items-center justify-center bg-navy-900 p-6 text-center"
-          >
-            {/* TODO: swap for <Image> once sponsor logos land */}
-            <span className="font-display text-xs font-bold uppercase tracking-[0.14em] text-white/30">
-              {s.name}
-            </span>
-          </div>
-        ))}
+      <div className="mt-14 grid gap-4 sm:grid-cols-2">
+        {sponsors.map((s) => {
+          const logo = (
+            <Image
+              src={s.logo}
+              alt={s.name}
+              width={s.width}
+              height={s.height}
+              sizes="(min-width: 640px) 30vw, 70vw"
+              className="h-auto max-h-20 w-auto max-w-[75%] object-contain transition-transform duration-300 group-hover:scale-105"
+            />
+          );
+          const tile = "group flex aspect-[5/2] items-center justify-center bg-white p-8";
+          return s.url ? (
+            <a key={s.name} href={s.url} target="_blank" rel="noopener noreferrer" className={tile} aria-label={s.name}>
+              {logo}
+            </a>
+          ) : (
+            <div key={s.name} className={tile}>
+              {logo}
+            </div>
+          );
+        })}
       </div>
 
       <Reveal>

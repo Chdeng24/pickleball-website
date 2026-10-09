@@ -87,7 +87,7 @@ export default function HomePage() {
         tone="navy"
         kicker="Partners"
         title="Backed by brands who get it"
-        lead="We're building a sponsor program for the 2025–26 season."
+        lead="Thanks to the brands that support the club."
       >
         <SponsorWall />
       </Section>

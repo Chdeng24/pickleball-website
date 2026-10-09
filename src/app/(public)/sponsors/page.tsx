@@ -14,7 +14,7 @@ export default function SponsorsPage() {
         className="pt-36 sm:pt-44"
         kicker="Partners"
         title="Partner with us"
-        lead="Reach 200+ UC Berkeley students who show up twice a week, every week."
+        lead="Reach 150+ UC Berkeley students who play every week."
       >
         <SponsorWall />
 

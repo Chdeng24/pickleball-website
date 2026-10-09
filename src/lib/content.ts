@@ -17,7 +17,7 @@ export const club = {
   instagram: "https://instagram.com/pickleballatberkeley",
   instagramHandle: "@pickleballatberkeley",
   blurb:
-    "We are UC Berkeley's pickleball club — a home for 150+ students who want to play, improve, and find their people on the court. Whether you picked up a paddle last week or you're chasing tournament wins, there's a place for you here.",
+    "UC Berkeley's pickleball club. 150+ students, from people who just picked up a paddle to players chasing tournament wins.",
 };
 
 export const stats = [
@@ -76,26 +76,18 @@ export const teams = [
     slug: "social",
     name: "Social Team",
     kicker: "Open to everyone",
-    description:
-      "Our largest community — 150+ members who play every Saturday, hit socials, and keep things low-pressure. No tryouts, no experience required. Just show up, RSVP, and play.",
-    highlights: [
-      "Saturday open play, beginner and advanced",
-      "Semester-long Pickleball League doubles tournament",
-      "Socials, fundraisers, and one-day tournaments",
-      "First 20 to RSVP get a spot — court capacity",
-    ],
+    description: "Our biggest group. No tryouts and no experience needed — just RSVP and come play on Saturdays.",
+    highlights: ["Saturday open play, beginner and advanced", "A semester-long doubles league", "Socials and club tournaments"],
   },
   {
     slug: "competitive",
     name: "Competitive Team",
     kicker: "By tryout",
-    description:
-      "Our travel and tournament roster. Competitive Team members represent Berkeley at collegiate events across California, with structured training and coaching throughout the season.",
+    description: "Berkeley's travel team. We play collegiate tournaments around California and earned a bid to DUPR College Nationals.",
     highlights: [
-      "Tryouts at the start of each semester", // TODO confirm
-      "Structured training blocks and match play",
-      "Collegiate tournament travel", // TODO: name the circuits/events
-      "Team kit and sponsor gear",
+      "Tryouts each semester", // TODO confirm timing
+      "Collegiate tournament travel",
+      "DUPR College Nationals bid",
     ],
   },
 ] as const;
@@ -254,9 +246,9 @@ export const albums: Record<"club" | "social", AlbumPhoto[]> = {
   club: [
     { src: "/media/albums/club/nationals-bid.jpg", alt: "Berkeley players holding a DUPR Nationals Bid Winner sign under a Champions banner", caption: "Nationals bid winners · The Hub Silicon Valley", width: 1500, height: 2000 },
     { src: "/media/albums/club/gameday.jpg", alt: "Berkeley team lined up on an indoor court at Gameday CBD", caption: "The team at Gameday CBD", width: 1500, height: 2000 },
-    { src: "/media/albums/club/outdoor-team.jpg", alt: "Club members posing together at the net on an outdoor court", caption: "The crew, courtside", width: 2000, height: 1500 },
-    { src: "/media/albums/club/rooftop-club.jpg", alt: "Members standing beside the Pickleball at Berkeley banner on a rooftop court", caption: "Flying the banner on the rooftop courts", width: 2000, height: 1500 },
-    { src: "/media/albums/club/rooftop-exec.jpg", alt: "Exec members arm in arm on a rooftop court", caption: "Exec on the rooftop courts", width: 1500, height: 2000 },
+    { src: "/media/albums/club/outdoor-team.jpg", alt: "Berkeley players posing together at the net after a scrimmage with Stanford", caption: "Stanford scrimmage", width: 2000, height: 1500 },
+    { src: "/media/albums/club/rooftop-club.jpg", alt: "Comp Team players beside the Pickleball at Berkeley banner at Neighborhood", caption: "Comp Team practice at Neighborhood", width: 2000, height: 1500 },
+    { src: "/media/albums/club/rooftop-exec.jpg", alt: "Exec members arm in arm on the courts at Neighborhood", caption: "Exec at Neighborhood", width: 1500, height: 2000 },
   ],
   /** Saturday open play — Social Team page. */
   social: [
@@ -266,19 +258,17 @@ export const albums: Record<"club" | "social", AlbumPhoto[]> = {
   ],
 };
 
-// TODO: replace with real sponsors as they come in
-export const sponsors = [
-  { name: "Your Brand Here", tier: "founding", url: null },
-  { name: "Your Brand Here", tier: "founding", url: null },
-  { name: "Your Brand Here", tier: "supporting", url: null },
-  { name: "Your Brand Here", tier: "supporting", url: null },
+/** Current sponsors. Logos live in public/media/sponsors/ — trimmed, on a white background. */
+export const sponsors: { name: string; logo: string; width: number; height: number; url: string | null }[] = [
+  { name: "RPM", logo: "/media/sponsors/rpm.png", width: 800, height: 267, url: null },
+  { name: "Centerline", logo: "/media/sponsors/centerline.png", width: 748, height: 80, url: null },
 ];
 
 export const sponsorPitch = {
   headline: "Put your brand in front of 150+ Berkeley students.",
   points: [
     { stat: "150+", label: "Active members" },
-    { stat: "2x", label: "Practices every week, all semester" },
+    { stat: "Weekly", label: "Open play every Saturday, all semester" },
     { stat: "100%", label: "UC Berkeley students, verified by .edu login" },
   ],
 };
