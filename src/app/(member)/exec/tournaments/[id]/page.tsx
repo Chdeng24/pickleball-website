@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { eq } from "drizzle-orm";
 import { requireExec } from "@/lib/session";
-import { isAdmin } from "@/lib/access";
 import { db, schema } from "@/db";
 import { spotsTakenByLeague, teamMembers } from "@/lib/league";
 import { loadLeagueView, type ViewMatch } from "@/lib/league-view";
@@ -49,7 +48,7 @@ function Heading({ children, tone = "muted" }: { children: React.ReactNode; tone
 }
 
 export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/tournaments/[id]">) {
-  const viewer = await requireExec();
+  await requireExec();
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
 
@@ -329,7 +328,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                       claimed: {view.name(report.winnerTeamId)}
                     </p>
                     <p className="mt-1 text-xs text-red-700">Dispute reason: {report.disputeReason}</p>
-                    {isAdmin(viewer) && m.teamAId && m.teamBId ? (
+                    {m.teamAId && m.teamBId ? (
                       <div className="mt-3">
                         <ResolveDisputeForm
                           reportId={report.id}
@@ -340,7 +339,7 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
                         />
                       </div>
                     ) : (
-                      <p className="mt-2 text-xs text-ink/55">Waiting on an admin.</p>
+                      <p className="mt-2 text-xs text-ink/55">Both teams need to be set before this can be decided.</p>
                     )}
                   </li>
                 );

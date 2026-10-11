@@ -348,7 +348,7 @@ export const matchReports = pgTable("match_report", {
     .notNull()
     .references(() => tmTeams.id, { onDelete: "cascade" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  /** Set once the dispute window closes or an admin confirms early. */
+  /** Set once the dispute window closes or exec confirms early. */
   confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
   disputedBy: uuid("disputed_by").references(() => users.id, { onDelete: "set null" }),
   disputeReason: text("dispute_reason"),

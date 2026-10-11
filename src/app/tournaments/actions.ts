@@ -253,5 +253,5 @@ export async function disputeScore(_prev: ActionResult, formData: FormData): Pro
     return fail(e);
   }
   refresh();
-  return { ok: true, message: "Disputed — an admin will sort it out." };
+  return { ok: true, message: "Disputed — exec will sort it out." };
 }

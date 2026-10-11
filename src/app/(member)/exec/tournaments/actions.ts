@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { and, eq } from "drizzle-orm";
-import { requireExec, requireAdmin } from "@/lib/session";
+import { requireExec } from "@/lib/session";
 import { db, schema } from "@/db";
 import { withTransaction } from "@/db/pool";
 import {
@@ -512,9 +512,9 @@ export async function endLeague(tournamentId: string): Promise<ActionResult> {
 
 const resolveSchema = z.object({ reportId: z.uuid(), winnerTeamId: z.uuid() });
 
-/** Admin-only per TASKS.md F4 — a disputed score is decided by an admin, not exec. */
+/** Exec (or admin) rules on a disputed score — the same people who can already override any result. */
 export async function resolveDispute(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
-  await requireAdmin();
+  await requireExec();
   const parsed = resolveSchema.safeParse({ reportId: formData.get("reportId"), winnerTeamId: formData.get("winnerTeamId") });
   if (!parsed.success) return { ok: false, error: "Invalid input." };
 

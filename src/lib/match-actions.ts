@@ -91,7 +91,7 @@ export async function confirmScoreTx(tx: Tx, input: { userId: string; matchId: s
   await settleMatchTx(tx, match, "confirmed", report.winnerTeamId);
 }
 
-/** The other team says the reported score is wrong — it goes to an admin. */
+/** The other team says the reported score is wrong — it goes to exec. */
 export async function disputeScoreTx(tx: Tx, input: { userId: string; matchId: string; reason: string }) {
   const { match, players, me } = await myMatch(tx, input.matchId, input.userId);
   if (match.status !== "reported") throw new LeagueError("There's no reported score to dispute on this match.");
@@ -179,7 +179,7 @@ export async function postMatchTimeTx(tx: Tx, input: { userId: string; matchId: 
     .where(eq(schema.matches.id, match.id));
 }
 
-/** Admin rules on a disputed (or any reported) score: confirms it with the chosen winner, advancing the bracket in the playoffs. */
+/** Exec rules on a disputed (or any reported) score: confirms it with the chosen winner, advancing the bracket in the playoffs. */
 export async function resolveDisputeTx(tx: Tx, input: { reportId: string; winnerTeamId: string }): Promise<boolean> {
   const [report] = await tx.select().from(schema.matchReports).where(eq(schema.matchReports.id, input.reportId));
   if (!report) return false;

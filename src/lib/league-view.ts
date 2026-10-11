@@ -72,7 +72,7 @@ export function resultText(view: LeagueView, m: ViewMatch, teamId?: string): str
     case "reported":
       return `Reported ${score} — waiting on confirmation`;
     case "disputed":
-      return `Disputed — an admin will decide`;
+      return `Disputed — exec will decide`;
     case "confirmed":
       return `${who(m.winnerTeamId)} ${score}`;
     case "forfeited":

@@ -475,7 +475,7 @@ into single elimination.** Two divisions, Beginner and Advanced.
   scores. Validate: 2 or 3 games, a winner consistent with the games, each game
   to 11 win-by-2 (or 15 — make it a tournament setting). Email the other three
   with a dispute link. Auto-confirm after `autoconfirm_hours` (default 24)
-  unless disputed. Disputes go to `requireAdmin()`.
+  unless disputed. Disputes go to exec (`requireExec()`) — the same people who can override any result.
 - **F5 Knockout.** Admin seeds 3 per pool into single elim, byes to top seeds.
   Auto-advance winners via `next_match_id` / `next_slot`.
 - **F6 Nudges.** Weekly email to teams with unplayed pool matches. This is the

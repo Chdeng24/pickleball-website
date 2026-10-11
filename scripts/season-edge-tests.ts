@@ -412,7 +412,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
-    "player buttons: post time, report, confirm, dispute, admin ruling, can't-make-it — with every guard",
+    "player buttons: post time, report, confirm, dispute, exec ruling, can't-make-it — with every guard",
     async (tx) => {
       const league = await makeLeague(tx);
       await makeTeams(tx, league.id, 8);
@@ -452,7 +452,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       assert.deepEqual([row.status, row.winnerTeamId], ["confirmed", m1.teamAId]);
       await rejects(sp(tx, (t) => confirmScoreTx(t, { userId: b1, matchId: m1.id })), AlreadyDone);
 
-      // Dispute → admin ruling picks the winner.
+      // Dispute → exec ruling picks the winner.
       const [c1] = await roster(m2.teamAId!);
       const [d1] = await roster(m2.teamBId!);
       await reportScoreTx(tx, { userId: c1, matchId: m2.id, games: [[11, 2], [11, 2]] });
