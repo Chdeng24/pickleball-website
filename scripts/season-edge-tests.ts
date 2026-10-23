@@ -8,12 +8,12 @@
  * Real leagues are never read, locked, or changed.
  *
  * Covers: every player button (post time, report, confirm, dispute,
- * can't-make-it) and the admin dispute ruling, a full season end to end, the weekly draw (one match per team per week, no repeats, open
+ * push back) and the admin dispute ruling, a full season end to end, the weekly draw (one match per team per week, no repeats, open
  * slots), swapping teams, a late team taking an open slot mid-season without
  * moving anyone else, withdrawals, random free-agent pairing, exec-added
  * teams, the playoff bracket advancing winners, and the hourly league clock
- * (Monday matchup emails, Thursday reminders, out-of-town makeups, and
- * settling unreported matches).
+ * (Wednesday/Sunday reminders, push-backs, and settling unreported matches
+ * at each half's deadline).
  */
 import assert from "node:assert/strict";
 import { Pool } from "@neondatabase/serverless";
@@ -33,8 +33,8 @@ import {
 import {
   confirmScoreTx,
   disputeScoreTx,
-  skipMatchTx,
-  skipsUsedTx,
+  pushBackMatchTx,
+  pushbacksUsedTx,
   postMatchTimeTx,
   reportScoreTx,
   resolveDisputeTx,
@@ -45,11 +45,12 @@ import {
   generateDraftDrawTx,
   generatePlayoffsTx,
   publishDrawTx,
+  seasonConfig,
   swapTeamsTx,
   TournamentError,
   withdrawTeamTx,
 } from "../src/lib/tournament";
-import { addDays, scheduleBy, shiftDeadline, weekDueBy } from "../src/lib/schedule";
+import { addDays, poolDueBy, regularSeasonEndsAt, weekDueBy } from "../src/lib/schedule";
 import { laInputToUtc, pacificDateKey } from "../src/lib/dates";
 import { leagueTickTx } from "../src/lib/social-league";
 
@@ -160,7 +161,9 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
         const week = ms.filter((m) => m.round === w);
         const sides = week.flatMap((m) => [m.teamAId, m.teamBId]);
         assert.equal(new Set(sides).size, 12, `week ${w} has a team playing twice`);
-        assert.equal(week[0].dueBy!.getTime(), weekDueBy(START, w).getTime());
+        // Weeks 1–4 are due at the halfway point, 5–7 at the end of the catch-up week.
+        assert.equal(week[0].dueBy!.getTime(), weekDueBy(START, w <= 4 ? 4 : 8).getTime());
+        assert.equal(week[0].dueBy!.getTime(), poolDueBy(seasonConfig(league), w).getTime());
       }
       const pairs = ms.map((m) => [m.teamAId, m.teamBId].sort().join());
       assert.equal(new Set(pairs).size, pairs.length);
@@ -352,67 +355,74 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
-    "clock: only two emails — Thu 'post a time' (skips posted/reported), Sun 9 AM 'report tonight' (skips reported), each once",
+    "clock: Wed + Sun 9 AM reminders list every unplayed match from weeks that have started, once per slot",
     async (tx) => {
       const league = await makeLeague(tx);
       await makeTeams(tx, league.id, 7); // 8 slots, 1 open → one bye + 3 real matches a week
       const exec = await makeUser(tx);
       await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
       await publishDrawTx(tx, league.id);
-      // due1 is the Sunday 11:59 PM after week 1; offsets below are Pacific calendar days back from the
-      // Saturday 11:59 PM before it — not 24h blocks, which drift an hour when the week crosses a DST change.
-      const due1 = weekDueBy(START, 1);
-      const at = (days: number, hours: number) =>
-        new Date(laInputToUtc(`${addDays(pacificDateKey(due1), -(days + 1))}T23:59`).getTime() + hours * 3_600_000);
+      // START is week 1's Monday; `day` counts Pacific calendar days from it.
+      const at = (day: number, time: string) => laInputToUtc(`${addDays(START, day)}T${time}`);
 
-      assert.equal((await leagueTickTx(tx, league.id, at(6, 9))).outbox.length, 0, "no Monday email");
+      assert.equal((await leagueTickTx(tx, league.id, at(1, "10:00"))).outbox.length, 0, "nothing on Tuesday");
 
       const slot = (await placeholders(tx, league.id))[0].id;
-      const [reported, posted] = (await poolMatches(tx, league.id)).filter((m) => m.round === 1 && m.teamAId !== slot && m.teamBId !== slot);
+      const real = (w: number) => async () => (await poolMatches(tx, league.id)).filter((m) => m.round === w && m.teamAId !== slot && m.teamBId !== slot);
+      const [reported, posted] = await real(1)();
       await execSetResultTx(tx, reported.id, { kind: "score", games: [[11, 4], [11, 4]] }, exec.id);
-      await tx.update(schema.matches).set({ scheduledAt: at(2, -4) }).where(eq(schema.matches.id, posted.id));
+      await tx.update(schema.matches).set({ scheduledAt: at(3, "19:00") }).where(eq(schema.matches.id, posted.id));
 
-      assert.equal((await leagueTickTx(tx, league.id, at(3, -1))).reminderEmails, 0, "nothing before Wed 11:59 PM");
-      const thu = await leagueTickTx(tx, league.id, at(3, 1)); // Thu ~1 AM
-      assert.equal(thu.reminderEmails, 4, "only the match with no time posted (2 teams × 2 players)");
-      assert.ok(thu.outbox.every((m) => m.subject.includes("post your match time")));
-      assert.equal((await leagueTickTx(tx, league.id, at(3, 1))).reminderEmails, 0);
+      assert.equal((await leagueTickTx(tx, league.id, at(2, "08:59"))).reminderEmails, 0, "not before 9 AM Wednesday");
+      const wed = await leagueTickTx(tx, league.id, at(2, "09:30"));
+      assert.equal(wed.reminderEmails, 8, "both unplayed week-1 matches, posted time or not (2 matches × 2 teams × 2 players)");
+      assert.ok(wed.outbox.every((m) => m.subject.includes("reminder") && m.html.includes("halfway point")));
+      assert.equal((await leagueTickTx(tx, league.id, at(2, "15:00"))).reminderEmails, 0, "once per slot");
+      assert.equal((await leagueTickTx(tx, league.id, at(3, "10:00"))).reminderEmails, 0, "nothing Thursday");
 
-      assert.equal((await leagueTickTx(tx, league.id, at(0, -14))).reportEmails, 0, "Saturday is no longer the deadline day");
-      const sun = await leagueTickTx(tx, league.id, at(-1, -14)); // Sun ~10 AM
-      assert.equal(sun.reportEmails, 8, "both unreported matches, posted or not");
-      assert.equal((await leagueTickTx(tx, league.id, at(-1, -14))).reportEmails, 0);
+      // Sunday the 11th is still week 1 (its overlap day), so week 2 isn't nagged about yet.
+      assert.equal((await leagueTickTx(tx, league.id, at(6, "09:30"))).reminderEmails, 8, "Sunday again");
+
+      // Week 2's Wednesday: week 1's leftovers plus week 2's three matches, one email per team.
+      const pending = [...(await real(1)()), ...(await real(2)())].filter((m) => m.status === "pending");
+      const teamsOwed = new Set(pending.flatMap((m) => [m.teamAId, m.teamBId]));
+      const wk2 = await leagueTickTx(tx, league.id, at(9, "09:30"));
+      assert.equal(wk2.reminderEmails, teamsOwed.size * 2);
+      assert.ok(wk2.outbox.some((m) => m.subject.includes("2 matches")), "a team owing both weeks gets them in one email");
     },
   ],
   [
-    "clock: unreported → double forfeit Monday morning; a makeup not played → the team that missed week 1 forfeits a week later",
+    "clock: unplayed first-half matches → double forfeit the Monday after the halfway point; a pushed-back one → the pusher forfeits at the end",
     async (tx) => {
       const league = await makeLeague(tx);
-      await makeTeams(tx, league.id, 4);
+      await makeTeams(tx, league.id, 8); // 4 matches a week, 7 weeks + 1 catch-up
       await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
       await publishDrawTx(tx, league.id);
       const [away, normal] = (await poolMatches(tx, league.id)).filter((m) => m.round === 1);
       await tx
         .update(schema.matches)
-        .set({ extendedForTeamId: away.teamAId, dueBy: shiftDeadline(away.dueBy!, 1) })
+        .set({ extendedForTeamId: away.teamAId, dueBy: regularSeasonEndsAt(seasonConfig(league)) })
         .where(eq(schema.matches.id, away.id));
 
       const mondayAfter = (w: number) => new Date(weekDueBy(START, w).getTime() + 11 * 3_600_000); // Monday ~11 AM
-      const r1 = await leagueTickTx(tx, league.id, mondayAfter(1));
-      assert.equal(r1.settled, 1);
+      assert.equal((await leagueTickTx(tx, league.id, mondayAfter(1))).settled, 0, "week 1 isn't due until the halfway point");
+
+      const half = await leagueTickTx(tx, league.id, mondayAfter(4));
+      assert.equal(half.settled, 15, "weeks 1–4, minus the pushed-back match");
       const [n1] = await tx.select().from(schema.matches).where(eq(schema.matches.id, normal.id));
       assert.deepEqual([n1.status, n1.winnerTeamId], ["forfeited", null]);
       const [a1] = await tx.select().from(schema.matches).where(eq(schema.matches.id, away.id));
-      assert.equal(a1.status, "pending", "the makeup isn't due yet");
+      assert.equal(a1.status, "pending", "the pushed-back match isn't due yet");
 
-      const r2 = await leagueTickTx(tx, league.id, mondayAfter(2));
+      const end = await leagueTickTx(tx, league.id, mondayAfter(8));
+      assert.equal(end.settled, 13, "weeks 5–7 plus the pushed-back match");
       const [a2] = await tx.select().from(schema.matches).where(eq(schema.matches.id, away.id));
       assert.deepEqual([a2.status, a2.winnerTeamId], ["forfeited", away.teamBId]);
-      assert.equal(r2.outbox.length, 0, "settling sends no email");
+      assert.equal(end.outbox.length, 0, "settling sends no email");
     },
   ],
   [
-    "player buttons: post time, report, confirm, dispute, exec ruling, can't-make-it — with every guard",
+    "player buttons: post time, report, confirm, dispute, exec ruling, push back — with every guard",
     async (tx) => {
       const league = await makeLeague(tx);
       await makeTeams(tx, league.id, 8);
@@ -423,8 +433,8 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       const [a1, a2] = await roster(m1.teamAId!);
       const [b1] = await roster(m1.teamBId!);
       const outsider = (await roster(m2.teamAId!))[0];
-      const due = weekDueBy(START, 1);
-      const tue = new Date(due.getTime() - 5 * 86_400_000);
+      const due = m1.dueBy!; // the halfway point
+      const tue = new Date(weekDueBy(START, 1).getTime() - 5 * 86_400_000);
 
       // Nothing works until the schedule is published.
       await rejects(sp(tx, (t) => postMatchTimeTx(t, { userId: a1, matchId: m1.id, when: tue, note: "" })), LeagueError, /isn't being played/);
@@ -437,7 +447,6 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       await postMatchTimeTx(tx, { userId: b1, matchId: m1.id, when: new Date(tue.getTime() + 3_600_000), note: "Court 4" });
       let [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m1.id));
       assert.equal(row.scheduledNote, "Court 4");
-      assert.ok(row.scheduledAt! < scheduleBy(due), "posted before the Wednesday cut-off");
 
       // Report: valid scores only, once; own team can't confirm or dispute; the other team confirms.
       await rejects(sp(tx, (t) => reportScoreTx(t, { userId: a1, matchId: m1.id, games: [[11, 10], [11, 5]] })), LeagueError, /win by|at least 2/i);
@@ -473,17 +482,16 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       await confirmScoreTx(tx, { userId: w5b, matchId: w5.id });
       assert.equal((await tx.select().from(schema.matches).where(eq(schema.matches.id, w5.id)))[0].status, "confirmed");
 
-      // Can't make it: pushes a week and clears the posted time; the other team can't skip someone's makeup.
+      // Push back: moves to the end of the round robin and clears the posted time; the other team can't push it again.
       const [e1] = await roster(m3.teamAId!);
       const [f1] = await roster(m3.teamBId!);
       await postMatchTimeTx(tx, { userId: e1, matchId: m3.id, when: tue, note: "" });
-      const first = await skipMatchTx(tx, { userId: e1, matchId: m3.id, now: tue, expect: "makeup" });
-      assert.equal(first.outcome, "makeup");
+      const first = await pushBackMatchTx(tx, { userId: e1, matchId: m3.id, now: tue });
       assert.equal(first.notify.length, 3);
-      assert.equal(first.outcome === "makeup" && first.mail.newDueBy.getTime(), weekDueBy(START, 2).getTime());
+      assert.equal(first.mail.newDueBy.getTime(), weekDueBy(START, 8).getTime());
       [row] = await tx.select().from(schema.matches).where(eq(schema.matches.id, m3.id));
-      assert.deepEqual([row.extendedForTeamId, row.scheduledAt], [m3.teamAId, null]);
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: f1, matchId: m3.id, now: tue, expect: "makeup" })), LeagueError, /other team's makeup/);
+      assert.deepEqual([row.extendedForTeamId, row.scheduledAt, row.dueBy!.getTime()], [m3.teamAId, null, weekDueBy(START, 8).getTime()]);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: f1, matchId: m3.id, now: tue })), LeagueError, /already been pushed back/);
     },
   ],
   [
@@ -530,7 +538,8 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
         // Sunday after the deadline: the dispute window (24h) has closed for these, and week[0] was never reported.
         const tick = await leagueTickTx(tx, league.id, new Date(weekDueBy(START, w).getTime() + 30 * 3_600_000));
         assert.equal(tick.confirmed, week.length - 1, `week ${w} auto-confirmed`);
-        assert.equal(tick.settled, 1, `week ${w} unreported match settled`);
+        // Unreported matches settle at each half's deadline: weeks 1–4 after week 4, 5–8 after week 8.
+        assert.equal(tick.settled, w === 4 || w === 8 ? 4 : 0, `week ${w} settling`);
       }
       const done = await poolMatches(tx, league.id);
       assert.ok(done.every((m) => m.status === "confirmed" || m.status === "forfeited"));
@@ -551,7 +560,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       };
       let bracket = await ko();
       const [inSemi] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, bracket[0].teamAId!))).map((r) => r.memberId);
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: inSemi, matchId: bracket[0].id, expect: "makeup" })), LeagueError, /Playoff/);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: inSemi, matchId: bracket[0].id })), LeagueError, /Playoff/);
       for (const m of bracket.filter((x) => x.round === 1)) await play(m.id, m.teamAId!, m.teamBId!);
       bracket = await ko();
       const final = bracket.find((x) => x.round === 2)!;
@@ -562,7 +571,7 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
     },
   ],
   [
-    "one skip per season: 1st skip → makeup; 2nd skip → instant forfeit; own makeup → forfeit; week 8 → forfeit; stale tab refused",
+    "one push-back per team: first-half only, once, to the end of the round robin, never after the deadline",
     async (tx) => {
       const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
       const teams = await makeTeams(tx, league.id, 10);
@@ -570,81 +579,66 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       await publishDrawTx(tx, league.id);
       const ms = await poolMatches(tx, league.id);
       const team = teams[0];
-      const [player] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, team))).map((r) => r.memberId);
-      const mine = (w: number) => ms.find((m) => m.round === w && (m.teamAId === team || m.teamBId === team))!;
-      const other = (m: (typeof ms)[number]) => (m.teamAId === team ? m.teamBId! : m.teamAId!);
+      const playerOf = async (t: string) => (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, t)))[0].memberId;
+      const player = await playerOf(team);
+      const matchOf = (t: string, w: number) => ms.find((m) => m.round === w && (m.teamAId === t || m.teamBId === t))!;
       const inWeek = (w: number) => new Date(weekDueBy(START, w).getTime() - 5 * 86_400_000); // Tuesday night
       const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
 
-      // Week 1: first skip → makeup due week 2.
-      const w1 = mine(1);
-      assert.equal((await skipMatchTx(tx, { userId: player, matchId: w1.id, now: inWeek(1), expect: "makeup" })).outcome, "makeup");
-      assert.equal((await get(w1.id)).dueBy!.getTime(), weekDueBy(START, 2).getTime());
+      // Week 1 → due at the end of week 8.
+      const w1 = matchOf(team, 1);
+      await pushBackMatchTx(tx, { userId: player, matchId: w1.id, now: inWeek(1) });
+      assert.deepEqual([(await get(w1.id)).dueBy!.getTime(), (await get(w1.id)).extendedForTeamId], [weekDueBy(START, 8).getTime(), team]);
 
-      // Week 2, a different match: a stale "makeup" button is refused (nothing changes)...
-      const w2 = mine(2);
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: player, matchId: w2.id, now: inWeek(2), expect: "makeup" })), LeagueError, /skip was just used/);
-      assert.equal((await get(w2.id)).status, "pending");
-      // ...and the real one forfeits it to the opponent, right away.
-      const f = await skipMatchTx(tx, { userId: player, matchId: w2.id, now: inWeek(2), expect: "forfeit" });
-      assert.equal(f.outcome, "forfeit");
-      assert.equal(f.outcome === "forfeit" && f.reason, "skip_used");
-      assert.deepEqual([(await get(w2.id)).status, (await get(w2.id)).winnerTeamId], ["forfeited", other(w2)]);
+      // No second push-back, and no forfeit either — the match just stays as it was.
+      const w2 = matchOf(team, 2);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: player, matchId: w2.id, now: inWeek(2) })), LeagueError, /already used/);
+      assert.deepEqual([(await get(w2.id)).status, (await get(w2.id)).dueBy!.getTime()], ["pending", weekDueBy(START, 4).getTime()]);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: player, matchId: w1.id, now: inWeek(2) })), LeagueError, /already been pushed back/);
 
-      // Can't make their own makeup (week 1's, now due week 2) → forfeit to the opponent.
-      const own = await skipMatchTx(tx, { userId: player, matchId: w1.id, now: inWeek(2), expect: "forfeit" });
-      assert.equal(own.outcome === "forfeit" && own.reason, "own_makeup");
-      assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).winnerTeamId], ["forfeited", other(w1)]);
-
-      // Week 3: still a forfeit (the limit is per season, not per week).
-      assert.equal((await skipMatchTx(tx, { userId: player, matchId: mine(3).id, now: inWeek(3), expect: "forfeit" })).outcome, "forfeit");
-
-      // A team with its skip unused: week 8 has no makeup week, so skipping it is a forfeit — and it doesn't use up the skip.
+      // A team with its push-back unused: not a second-half match, not after the halfway deadline — week 4 before it is fine.
       const fresh = teams[5];
-      const [freshPlayer] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, fresh))).map((r) => r.memberId);
-      const w8 = ms.find((m) => m.round === 8 && (m.teamAId === fresh || m.teamBId === fresh))!;
-      const r8 = await skipMatchTx(tx, { userId: freshPlayer, matchId: w8.id, now: inWeek(8), expect: "forfeit" });
-      assert.equal(r8.outcome === "forfeit" && r8.reason, "no_week_left");
-      assert.equal(
-        (await tx.select().from(schema.matches).where(and(eq(schema.matches.tournamentId, league.id), eq(schema.matches.extendedForTeamId, fresh)))).length,
-        0,
-      );
-
-      // Past the deadline: nothing.
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: player, matchId: mine(4).id, now: new Date(weekDueBy(START, 4).getTime() + 60_000), expect: "forfeit" })), LeagueError, /deadline has passed/);
+      const freshPlayer = await playerOf(fresh);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: freshPlayer, matchId: matchOf(fresh, 5).id, now: inWeek(2) })), LeagueError, /first-half/);
+      const late = new Date(weekDueBy(START, 4).getTime() + 60_000);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: freshPlayer, matchId: matchOf(fresh, 2).id, now: late })), LeagueError, /deadline has passed/);
+      assert.equal(await pushbacksUsedTx(tx, league.id, fresh), 0);
+      await pushBackMatchTx(tx, { userId: freshPlayer, matchId: matchOf(fresh, 4).id, now: inWeek(4) });
+      assert.equal(await pushbacksUsedTx(tx, league.id, fresh), 1);
     },
   ],
   [
-    "reporting window: a score reported Sunday night (deadline day), or weeks early, counts — Monday's settling leaves it alone",
+    "reporting window: a score reported on the halfway Sunday night, or weeks early, counts — Monday's settling leaves it alone",
     async (tx) => {
       const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
-      const teams = await makeTeams(tx, league.id, 4);
+      const teams = await makeTeams(tx, league.id, 8);
       await generateDraftDrawTx(tx, league.id, { openSlots: 0 });
       await publishDrawTx(tx, league.id);
       const ms = await poolMatches(tx, league.id);
       const [p1] = (await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, teams[0]))).map((r) => r.memberId);
       const mine = (w: number) => ms.find((m) => m.round === w && (m.teamAId === teams[0] || m.teamBId === teams[0]))!;
       const get = async (id: string) => (await tx.select().from(schema.matches).where(eq(schema.matches.id, id)))[0];
-      const due1 = weekDueBy(START, 1);
+      const due1 = weekDueBy(START, 4);
+      assert.equal(mine(1).dueBy!.getTime(), due1.getTime());
 
-      // Week 1, reported Sunday 9 PM — the last day of the window.
+      // Week 1, reported the halfway Sunday at 9 PM — the last day of its window.
       const sundayNight = laInputToUtc(`${pacificDateKey(due1)}T21:00`);
       assert.ok(sundayNight < due1);
       await reportScoreTx(tx, { userId: p1, matchId: mine(1).id, games: [[11, 6], [11, 8]] });
       await tx.update(schema.matchReports).set({ createdAt: sundayNight }).where(eq(schema.matchReports.matchId, mine(1).id));
-      // Week 3, reported two weeks early.
-      await reportScoreTx(tx, { userId: p1, matchId: mine(3).id, games: [[11, 4], [11, 4]] });
+      // Week 6, reported weeks early.
+      await reportScoreTx(tx, { userId: p1, matchId: mine(6).id, games: [[11, 4], [11, 4]] });
 
       // Monday ~10 AM settles unplayed matches only; the Sunday report survives, then auto-confirms 24h later.
       await leagueTickTx(tx, league.id, new Date(due1.getTime() + 11 * 3_600_000));
       assert.equal((await get(mine(1).id)).status, "reported");
       await leagueTickTx(tx, league.id, new Date(sundayNight.getTime() + 25 * 3_600_000));
       assert.equal((await get(mine(1).id)).status, "confirmed");
-      assert.equal((await get(mine(3).id)).status, "confirmed", "the early report confirmed too");
+      assert.equal((await get(mine(6).id)).status, "confirmed", "the early report confirmed too");
     },
   ],
   [
-    "the skip belongs to the team: partners share one; the opponent is never charged or punished for it",
+    "the push-back belongs to the team: partners share one; the opponent is never charged or punished for it",
     async (tx) => {
       const league = await makeLeague(tx, { roundRobinWeeks: 8, catchupWeeks: 0 });
       const teams = await makeTeams(tx, league.id, 10);
@@ -663,37 +657,33 @@ const scenarios: [string, (tx: Tx) => Promise<void>][] = [
       const opp = w1.teamAId === team ? w1.teamBId! : w1.teamAId!;
       const [oppPlayer] = await roster(opp);
 
-      // One partner uses the team's skip...
-      assert.equal((await skipMatchTx(tx, { userId: p1, matchId: w1.id, now: inWeek(1), expect: "makeup" })).outcome, "makeup");
-      assert.equal(await skipsUsedTx(tx, league.id, team), 1);
-      // ...so the other partner has none left: their skip on another week is a forfeit, not a second makeup.
-      const w2 = weekOfTeam(team, 2);
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: p2, matchId: w2.id, now: inWeek(2), expect: "makeup" })), LeagueError, /skip was just used/);
-      const f = await skipMatchTx(tx, { userId: p2, matchId: w2.id, now: inWeek(2), expect: "forfeit" });
-      assert.equal(f.outcome === "forfeit" && f.reason, "skip_used");
-      assert.equal(await skipsUsedTx(tx, league.id, team), 1, "a forfeit doesn't count as a skip either");
+      // One partner uses the team's push-back, so the other partner has none left.
+      await pushBackMatchTx(tx, { userId: p1, matchId: w1.id, now: inWeek(1) });
+      assert.equal(await pushbacksUsedTx(tx, league.id, team), 1);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: p2, matchId: weekOfTeam(team, 2).id, now: inWeek(2) })), LeagueError, /already used/);
 
-      // The opponent: their skip count is untouched, and there's nothing for them to do on the makeup.
-      assert.equal(await skipsUsedTx(tx, league.id, opp), 0);
-      await rejects(sp(tx, (t) => skipMatchTx(t, { userId: oppPlayer, matchId: w1.id, now: inWeek(2), expect: "makeup" })), LeagueError, /other team's makeup/);
+      // The opponent: their count is untouched, they can't push this one again, and they keep their own.
+      assert.equal(await pushbacksUsedTx(tx, league.id, opp), 0);
+      await rejects(sp(tx, (t) => pushBackMatchTx(t, { userId: oppPlayer, matchId: w1.id, now: inWeek(2) })), LeagueError, /already been pushed back/);
       assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).extendedForTeamId], ["pending", team]);
-      // They still have their own skip for their own week.
-      assert.equal((await skipMatchTx(tx, { userId: oppPlayer, matchId: weekOfTeam(opp, 3).id, now: inWeek(3), expect: "makeup" })).outcome, "makeup");
+      await pushBackMatchTx(tx, { userId: oppPlayer, matchId: weekOfTeam(opp, 3).id, now: inWeek(3) });
 
-      // Makeup never played: the team that skipped forfeits — the opponent gets the win, not a double forfeit.
-      await leagueTickTx(tx, league.id, new Date(weekDueBy(START, 2).getTime() + 30 * 3_600_000));
+      // Never played: the team that pushed it back forfeits — the opponent gets the win, not a double forfeit.
+      await leagueTickTx(tx, league.id, new Date(weekDueBy(START, 4).getTime() + 30 * 3_600_000));
+      assert.equal((await get(w1.id)).status, "pending", "not settled at the halfway point");
+      await leagueTickTx(tx, league.id, new Date(weekDueBy(START, 8).getTime() + 30 * 3_600_000));
       assert.deepEqual([(await get(w1.id)).status, (await get(w1.id)).winnerTeamId], ["forfeited", opp]);
     },
   ],
 ];
 
 /**
- * Two skips at the same instant, on two different matches, from separate
- * connections: exactly one may become the free makeup; the other must be
+ * Two push-backs at the same instant, on two different matches, from
+ * separate connections: exactly one may go through; the other must be
  * refused. Needs committed rows (a rolled-back transaction can't race
  * itself), so it builds a hidden one-day-kind league and deletes it after.
  */
-async function skipRace(): Promise<void> {
+async function pushbackRace(): Promise<void> {
   const ids: { league?: string; users: string[] } = { users: [] };
   try {
     const setup = await conn.transaction(async (tx) => {
@@ -713,11 +703,11 @@ async function skipRace(): Promise<void> {
 
     const now = new Date(weekDueBy(START, 1).getTime() - 4 * 86_400_000);
     const results = await Promise.allSettled(
-      setup.matchIds.map((matchId) => conn.transaction((tx) => skipMatchTx(tx, { userId: setup.player, matchId, now, expect: "makeup" }))),
+      setup.matchIds.map((matchId) => conn.transaction((tx) => pushBackMatchTx(tx, { userId: setup.player, matchId, now }))),
     );
     const won = results.filter((r) => r.status === "fulfilled").length;
-    const refused = results.filter((r) => r.status === "rejected" && r.reason instanceof LeagueError && /skip was just used/.test(r.reason.message)).length;
-    assert.deepEqual([won, refused], [1, 1], `expected exactly one makeup; got ${JSON.stringify(results.map((r) => r.status))}`);
+    const refused = results.filter((r) => r.status === "rejected" && r.reason instanceof LeagueError && /already used/.test(r.reason.message)).length;
+    assert.deepEqual([won, refused], [1, 1], `expected exactly one push-back; got ${JSON.stringify(results.map((r) => r.status))}`);
   } finally {
     if (ids.league) await conn.delete(schema.tournaments).where(eq(schema.tournaments.id, ids.league));
     for (const id of ids.users) await conn.delete(schema.users).where(eq(schema.users.id, id));
@@ -743,11 +733,11 @@ async function main() {
   }
 
   try {
-    await skipRace();
-    console.log("  ✓ race: two skips at the same instant → exactly one makeup, the other refused");
+    await pushbackRace();
+    console.log("  ✓ race: two push-backs at the same instant → exactly one goes through, the other refused");
   } catch (e) {
     failed++;
-    console.log(`  ✗ race: two skips at the same instant\n      ${e instanceof Error ? e.message : e}`);
+    console.log(`  ✗ race: two push-backs at the same instant\n      ${e instanceof Error ? e.message : e}`);
   }
 
   // Nothing tagged may survive: scenarios roll back, and the race cleans up after itself.

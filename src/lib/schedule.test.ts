@@ -6,13 +6,15 @@ import {
   bracketSeedPairs,
   matchLabel,
   nextBracketSpot,
-  skipDecision,
-  SKIP_LIMIT,
+  pushbackDecision,
+  PUSHBACK_LIMIT,
   overdueOutcome,
   playoffRounds,
   recommendedPlayoffTeams,
-  reportReminderAt,
-  scheduleBy,
+  reminderDue,
+  reminderSlot,
+  halfwayWeek,
+  poolDueBy,
   postTimeProblem,
   roundRobinRounds,
   scheduleSpread,
@@ -129,13 +131,35 @@ test("weekOf maps instants to season weeks", () => {
   assert.equal(weekOf("2026-10-05", new Date("2026-10-11T00:01:00-07:00")), 2);
 });
 
-test("weekly clock: post-a-time cut-off Wed 11:59 PM, report reminder Sun 9 AM", () => {
-  const due = weekDueBy(FALL.seasonStartsOn, 1);
-  assert.equal(formatDeadline(scheduleBy(due)), "Wed, Oct 7 · 11:59 PM PDT");
-  assert.equal(formatDeadline(reportReminderAt(due)), "Sun, Oct 11 · 9:00 AM PDT");
-  // A Thursday playoff deadline still uses that week's Wednesday.
-  const semis = playoffRounds(FALL)[1].dueBy;
-  assert.equal(formatDeadline(scheduleBy(semis)), "Wed, Dec 9 · 11:59 PM PST");
+test("weekly reminders: Wednesday and Sunday 9 AM, each sent once, never a day late", () => {
+  const at = (iso: string) => new Date(iso);
+  // Wed Oct 21 9 AM PDT and Sun Oct 25 9 AM PDT are the slots.
+  assert.equal(reminderSlot(at("2026-10-21T08:59:00-07:00")), null);
+  assert.equal(formatDeadline(reminderSlot(at("2026-10-21T09:00:00-07:00"))!), "Wed, Oct 21 · 9:00 AM PDT");
+  assert.equal(formatDeadline(reminderSlot(at("2026-10-22T08:30:00-07:00"))!), "Wed, Oct 21 · 9:00 AM PDT");
+  assert.equal(reminderSlot(at("2026-10-22T09:30:00-07:00")), null, "more than a day late");
+  assert.equal(reminderSlot(at("2026-10-23T12:00:00-07:00")), null, "Friday");
+  assert.equal(formatDeadline(reminderSlot(at("2026-10-25T10:00:00-07:00"))!), "Sun, Oct 25 · 9:00 AM PDT");
+  // After DST ends it's still 9 AM local.
+  assert.equal(formatDeadline(reminderSlot(at("2026-11-04T09:05:00-08:00"))!), "Wed, Nov 4 · 9:00 AM PST");
+
+  const wed = at("2026-10-21T10:00:00-07:00");
+  assert.equal(reminderDue(null, wed), true);
+  assert.equal(reminderDue(at("2026-10-21T09:00:00-07:00"), wed), false, "already sent this slot");
+  assert.equal(reminderDue(at("2026-10-18T09:00:00-07:00"), wed), true, "last Sunday's doesn't count");
+  assert.equal(reminderDue(null, at("2026-10-23T12:00:00-07:00")), false);
+});
+
+test("halves: weeks 1–4 due at the halfway point, weeks 5–8 at the end of the round robin", () => {
+  const eight = { ...FALL, roundRobinWeeks: 8, catchupWeeks: 0 };
+  assert.equal(halfwayWeek(eight), 4);
+  assert.equal(halfwayWeek(FALL), 4);
+  assert.equal(formatDeadline(poolDueBy(eight, 1)), "Sun, Nov 1 · 11:59 PM PST");
+  assert.equal(formatDeadline(poolDueBy(eight, 4)), "Sun, Nov 1 · 11:59 PM PST");
+  assert.equal(formatDeadline(poolDueBy(eight, 5)), "Sun, Nov 29 · 11:59 PM PST");
+  assert.equal(formatDeadline(poolDueBy(eight, 8)), "Sun, Nov 29 · 11:59 PM PST");
+  // Catch-up weeks extend the second half.
+  assert.equal(formatDeadline(poolDueBy(FALL, 7)), "Sun, Nov 29 · 11:59 PM PST");
 });
 
 test("posting a match time: must be before the score deadline, only while unplayed", () => {
@@ -199,53 +223,47 @@ test("bracket seeding keeps the top two apart until the final", () => {
   assert.deepEqual(nextBracketSpot(3), { slot: 1, side: "B" });
 });
 
-test("skips: one makeup per team per season; every skip after that is a forfeit", () => {
-  assert.equal(SKIP_LIMIT, 1);
-  const seasonEnd = weekDueBy(FALL.seasonStartsOn, 8);
+test("push-back: one first-half match per team, to the second-half deadline", () => {
+  assert.equal(PUSHBACK_LIMIT, 1);
+  const eight = { ...FALL, roundRobinWeeks: 8, catchupWeeks: 0 };
   const base = { stage: "pool" as const, status: "pending" as const, extendedForTeamId: null };
-  const wk1 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 1) };
-  const before = new Date("2026-10-08T12:00:00-07:00");
-  const fresh = { teamId: "A", skipsUsed: 0 };
+  const wk2 = { ...base, round: 2, dueBy: poolDueBy(eight, 2) };
+  const before = new Date("2026-10-23T12:00:00-07:00");
+  const fresh = { teamId: "A", pushbacksUsed: 0 };
 
-  // First skip → makeup. Second → forfeit, no matter which match.
-  assert.deepEqual(skipDecision(wk1, fresh, before, seasonEnd), { kind: "makeup" });
-  assert.deepEqual(skipDecision(wk1, { teamId: "A", skipsUsed: 1 }, before, seasonEnd), { kind: "forfeit", reason: "skip_used" });
-  assert.deepEqual(skipDecision(wk1, { teamId: "A", skipsUsed: 3 }, before, seasonEnd), { kind: "forfeit", reason: "skip_used" });
+  const ok = pushbackDecision(wk2, fresh, before, eight);
+  assert.equal(ok.kind, "allowed");
+  assert.equal(ok.kind === "allowed" && formatDeadline(ok.newDueBy), "Sun, Nov 29 · 11:59 PM PST");
 
-  // Can't make your own makeup → forfeit (even though that skip is already counted).
-  const makeup = { ...wk1, extendedForTeamId: "A" };
-  assert.deepEqual(skipDecision(makeup, { teamId: "A", skipsUsed: 1 }, before, seasonEnd), { kind: "forfeit", reason: "own_makeup" });
-  // The other team on someone else's makeup can't skip it — nothing to do; the asker forfeits at the deadline.
-  assert.match((skipDecision(makeup, { teamId: "B", skipsUsed: 0 }, before, seasonEnd) as { message: string }).message, /other team's makeup/);
-
-  // Week 8 has no makeup week → skipping it is a forfeit even with a skip left; week 7 can still go to week 8.
-  const wk7 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 7) };
-  const wk8 = { ...base, dueBy: weekDueBy(FALL.seasonStartsOn, 8) };
-  assert.deepEqual(skipDecision(wk7, fresh, new Date("2026-11-17T12:00:00-08:00"), seasonEnd), { kind: "makeup" });
-  assert.deepEqual(skipDecision(wk8, fresh, new Date("2026-11-24T12:00:00-08:00"), seasonEnd), { kind: "forfeit", reason: "no_week_left" });
-
-  // Never: playoffs, finished, or past the deadline.
-  assert.equal(skipDecision({ ...wk1, stage: "knockout" }, fresh, before, seasonEnd).kind, "blocked");
-  assert.equal(skipDecision({ ...wk1, status: "reported" }, fresh, before, seasonEnd).kind, "blocked");
-  assert.equal(skipDecision(wk1, fresh, new Date("2026-10-11T09:00:00-07:00"), seasonEnd).kind, "makeup", "Sunday is still before the deadline");
-  assert.equal(skipDecision(wk1, fresh, new Date("2026-10-12T09:00:00-07:00"), seasonEnd).kind, "blocked");
+  const blocked = (m: Parameters<typeof pushbackDecision>[0], team = fresh, now = before) => {
+    const d = pushbackDecision(m, team, now, eight);
+    return d.kind === "blocked" ? d.message : null;
+  };
+  assert.match(blocked(wk2, { teamId: "A", pushbacksUsed: 1 })!, /already used/);
+  assert.match(blocked({ ...wk2, extendedForTeamId: "A" })!, /already been pushed back/);
+  assert.match(blocked({ ...wk2, extendedForTeamId: "B" })!, /already been pushed back/);
+  assert.match(blocked({ ...base, round: 5, dueBy: poolDueBy(eight, 5) })!, /first-half/);
+  assert.match(blocked({ ...wk2, stage: "knockout" })!, /Playoff/);
+  assert.match(blocked({ ...wk2, status: "reported" })!, /already has a result/);
+  assert.equal(blocked(wk2, fresh, new Date("2026-11-01T22:00:00-08:00")), null, "the halfway Sunday is still before the deadline");
+  assert.match(blocked(wk2, fresh, new Date("2026-11-02T09:00:00-08:00"))!, /deadline has passed/);
 });
 
-test("overdue: the out-of-town team forfeits an unplayed makeup; otherwise double forfeit", () => {
+test("overdue: the team that pushed a match back forfeits it unplayed; otherwise double forfeit", () => {
   assert.deepEqual(overdueOutcome({ teamAId: "a", teamBId: "b", extendedForTeamId: "a" }), { winnerTeamId: "b" });
   assert.deepEqual(overdueOutcome({ teamAId: "a", teamBId: "b", extendedForTeamId: "b" }), { winnerTeamId: "a" });
   assert.deepEqual(overdueOutcome({ teamAId: "a", teamBId: "b", extendedForTeamId: null }), { winnerTeamId: null });
 });
 
-test("labels: week ranges cross months, makeups and playoff rounds are named", () => {
+test("labels: week ranges cross months, pushed-back matches and playoff rounds are named", () => {
   assert.equal(weekRange("2026-10-05", 1), "Oct 4 – 11");
   assert.equal(weekRange("2026-10-05", 2), "Oct 11 – 18");
   assert.equal(weekRange("2026-10-05", 9), "Nov 29 – Dec 6");
   // The range ends on the day the match is actually due.
   assert.equal(formatDeadline(weekDueBy("2026-10-05", 1)).slice(0, 11), "Sun, Oct 11");
   const season = { seasonStartsOn: "2026-10-05", playoffTeams: 8 };
-  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3 · Oct 18 – 25");
-  assert.equal(matchLabel({ stage: "pool", round: 2, extendedForTeamId: "x" }, season), "Makeup (week 2)");
+  assert.equal(matchLabel({ stage: "pool", round: 3, extendedForTeamId: null }, season), "Week 3");
+  assert.equal(matchLabel({ stage: "pool", round: 2, extendedForTeamId: "x" }, season), "Week 2 · pushed back");
   assert.equal(matchLabel({ stage: "knockout", round: 1, extendedForTeamId: null }, season), "Quarterfinals");
   assert.equal(matchLabel({ stage: "knockout", round: 3, extendedForTeamId: null }, season), "Final");
 });

@@ -99,7 +99,7 @@ function MatchRow({
               : m.status === "pending" && m.scheduledAt
                 ? `Playing ${formatDeadline(m.scheduledAt)}${m.scheduledNote ? ` · ${m.scheduledNote}` : ""}`
                 : resultText(view, m)}
-            {m.extendedForTeamId && m.status === "pending" && m.dueBy ? ` · makeup due ${formatDeadline(m.dueBy)}` : ""}
+            {m.extendedForTeamId && m.status === "pending" && m.dueBy ? ` · pushed back, due ${formatDeadline(m.dueBy)}` : ""}
           </span>
         )}
       </div>

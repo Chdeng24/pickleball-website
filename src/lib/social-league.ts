@@ -2,27 +2,25 @@ import "server-only";
 import { and, eq, inArray, isNull } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { withTransaction, type Tx } from "@/db/pool";
-import { noTimePostedEmail, reportTonightEmail, sendMany, type MatchLine } from "@/lib/email";
-import { matchLabel, OVERDUE_GRACE_MS, overdueOutcome, reportReminderAt, scheduleBy } from "@/lib/schedule";
+import { matchReminderEmail, sendMany, type MatchLine } from "@/lib/email";
+import { currentWeek, halfwayDueBy, halfwayWeek, matchLabel, OVERDUE_GRACE_MS, overdueOutcome, reminderDue } from "@/lib/schedule";
 import { seasonConfig, settleMatchTx } from "@/lib/tournament";
 
 /**
  * The league's clock. Called hourly by the cron route. Each league's tick
  * runs in one transaction holding the league row lock, and every email is
- * claimed on its match row (reminderSentAt / reportReminderSentAt) in that same
- * transaction — so overlapping or repeated runs never double-send, and a
- * missed run is caught up by the next.
+ * claimed on its match row (reminderSentAt) in that same transaction — so
+ * overlapping or repeated runs never double-send, and a missed run is caught
+ * up by the next.
  *
  *   1. Auto-confirm scores whose dispute window has closed (advancing playoff winners).
- *   2. Monday ~10 AM: settle the week's unreported round-robin matches
- *      (makeup not played → the team that missed the original week forfeits; otherwise double forfeit).
- *   3. After Wednesday 11:59 PM: "post your match time" to both teams if nobody has.
- *   4. Sunday 9 AM: "report your score by tonight" to both teams if it's still unreported.
- *
- * Those two are the only recurring emails — by design, to keep inboxes quiet.
+ *   2. Monday ~10 AM after a deadline: settle unreported round-robin matches
+ *      (pushed back and not played → the team that pushed it forfeits; otherwise double forfeit).
+ *   3. Wednesday and Sunday 9 AM: one reminder per team listing every match it
+ *      still has to play, with the deadline.
  */
 export async function runLeagueTick(now = new Date()) {
-  const totals = { confirmed: 0, settled: 0, reminderEmails: 0, reportEmails: 0 };
+  const totals = { confirmed: 0, settled: 0, reminderEmails: 0 };
 
   const leagues = await db()
     .select({ id: schema.tournaments.id })
@@ -36,7 +34,6 @@ export async function runLeagueTick(now = new Date()) {
     totals.confirmed += r.confirmed;
     totals.settled += r.settled;
     totals.reminderEmails += r.reminderEmails;
-    totals.reportEmails += r.reportEmails;
   }
   return totals;
 }
@@ -45,7 +42,7 @@ type Outbox = Parameters<typeof sendMany>[0];
 
 /** One league's tick, inside one transaction holding the league row lock. Returns the emails to send once committed. */
 export async function leagueTickTx(tx: Tx, tournamentId: string, now: Date) {
-  const out = { outbox: [] as Outbox, confirmed: 0, settled: 0, reminderEmails: 0, reportEmails: 0 };
+  const out = { outbox: [] as Outbox, confirmed: 0, settled: 0, reminderEmails: 0 };
   const [tournament] = await tx.select().from(schema.tournaments).where(eq(schema.tournaments.id, tournamentId)).for("update");
   if (!tournament?.poolsAnnouncedAt || !tournament.seasonStartsOn || !tournament.finalOn) return out;
   if (tournament.status !== "pools" && tournament.status !== "knockout") return out;
@@ -108,40 +105,32 @@ export async function leagueTickTx(tx: Tx, tournamentId: string, now: Date) {
     out.settled++;
   }
 
-  /* 3 + 4. Reminders — one email per team listing all its matches. */
+  /* 3. Reminders — one email per team listing every match it still has to play. */
+  const week = currentWeek(season.seasonStartsOn, now);
   const remindersByTeam = new Map<string, MatchLine[]>();
-  const reportByTeam = new Map<string, MatchLine[]>();
-  const add = (map: Map<string, MatchLine[]>, m: M, ids: string[]) => {
-    for (const id of ids) map.set(id, [...(map.get(id) ?? []), line(m, id)]);
-  };
-
   for (const m of matches) {
-    if (m.status !== "pending" || !m.dueBy || !m.teamAId || !m.teamBId || now > m.dueBy) continue;
-    const realSides = [m.teamAId, m.teamBId].filter((id) => teams.get(id)?.real);
-    if (realSides.length === 0) continue;
-
-    if (!m.reminderSentAt && !m.scheduledAt && bothReal(m) && now >= scheduleBy(m.dueBy)) {
-      await tx.update(schema.matches).set({ reminderSentAt: now }).where(eq(schema.matches.id, m.id));
-      add(remindersByTeam, m, realSides);
-    }
-    if (!m.reportReminderSentAt && bothReal(m) && now >= reportReminderAt(m.dueBy)) {
-      await tx.update(schema.matches).set({ reportReminderSentAt: now }).where(eq(schema.matches.id, m.id));
-      add(reportByTeam, m, realSides);
-    }
+    if (m.status !== "pending" || !m.dueBy || !bothReal(m) || now > m.dueBy) continue;
+    // Round-robin weeks that haven't started yet aren't nagged about.
+    if (m.stage === "pool" && (m.round ?? 0) > week) continue;
+    if (!reminderDue(m.reminderSentAt, now)) continue;
+    await tx.update(schema.matches).set({ reminderSentAt: now }).where(eq(schema.matches.id, m.id));
+    for (const id of [m.teamAId!, m.teamBId!]) remindersByTeam.set(id, [...(remindersByTeam.get(id) ?? []), line(m, id)]);
   }
 
   for (const [teamId, lines] of remindersByTeam) {
     const team = teams.get(teamId)!;
+    lines.sort((a, b) => a.dueBy.getTime() - b.dueBy.getTime());
     for (const p of team.players) {
-      out.outbox.push(noTimePostedEmail(p, { tournamentName: tournament.name, teamName: team.name, matches: lines }));
+      out.outbox.push(
+        matchReminderEmail(p, {
+          tournamentName: tournament.name,
+          teamName: team.name,
+          matches: lines,
+          halfwayDueBy: halfwayDueBy(season),
+          halfwayWeek: halfwayWeek(season),
+        }),
+      );
       out.reminderEmails++;
-    }
-  }
-  for (const [teamId, lines] of reportByTeam) {
-    const team = teams.get(teamId)!;
-    for (const p of team.players) {
-      out.outbox.push(reportTonightEmail(p, { tournamentName: tournament.name, teamName: team.name, matches: lines }));
-      out.reportEmails++;
     }
   }
   return out;

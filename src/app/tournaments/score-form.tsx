@@ -3,14 +3,14 @@
 import { useActionState, useState, useTransition } from "react";
 import { useFormStatus } from "react-dom";
 import { useRouter } from "next/navigation";
-import { reportScore, disputeScore, confirmScore, skipMatch, postMatchTime, type ActionResult } from "./actions";
+import { reportScore, disputeScore, confirmScore, pushBackMatch, postMatchTime, type ActionResult } from "./actions";
 import { safeAction } from "./safe-action";
 
 const initialState: ActionResult = { ok: false };
 const safeReportScore = safeAction(reportScore);
 const safeDisputeScore = safeAction(disputeScore);
 const safeConfirmScore = safeAction(confirmScore);
-const safeSkipMatch = safeAction(skipMatch);
+const safePushBackMatch = safeAction(pushBackMatch);
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -155,68 +155,41 @@ export function ConfirmScoreButton({ matchId }: { matchId: string }) {
   );
 }
 
-/**
- * "Can't make it this week." Two taps, and the confirm step says exactly what
- * happens: the team's one makeup of the season, or — once that's used — a
- * forfeit to the other team.
- */
-export function SkipButton({
-  matchId,
-  consequence,
-  warning,
-  opponentName,
-}: {
-  matchId: string;
-  consequence: "makeup" | "forfeit";
-  /** Why it's a forfeit (shown in the confirm step). */
-  warning?: string;
-  opponentName: string;
-}) {
+/** "Can't make it before the halfway point." Two taps, and the confirm step says exactly what happens. */
+export function PushBackButton({ matchId, newDueBy }: { matchId: string; /** Formatted second-half deadline. */ newDueBy: string }) {
   const [armed, setArmed] = useState(false);
   const [pending, start] = useTransition();
   const [result, setResult] = useState<ActionResult | null>(null);
   const router = useRouter();
-  const forfeit = consequence === "forfeit";
 
   if (result?.ok) return <p className="text-xs text-navy-800">{result.message}</p>;
   if (!armed) {
     return (
       <button type="button" onClick={() => setArmed(true)} className="text-xs font-bold uppercase text-ink/55 underline underline-offset-2">
-        Can&apos;t make it this week
+        Push back
       </button>
     );
   }
   return (
-    <div className={forfeit ? "mt-2 border-2 border-red-300 bg-red-50 p-3" : "mt-2 border-2 border-gold-500 bg-gold-500/10 p-3"}>
-      {forfeit ? (
-        <p className="text-sm text-navy-900">
-          <strong>{warning}</strong> {opponentName} gets the win, and everyone in the match is emailed. This can&apos;t be undone
-          from here.
-        </p>
-      ) : (
-        <p className="text-sm text-navy-900">
-          This uses your team&apos;s <strong>one skip for the season</strong>. The match becomes a makeup due next Sunday and your
-          opponents are emailed. If the makeup doesn&apos;t happen, your team forfeits it — and any skip after this is a forfeit.
-        </p>
-      )}
+    <div className="mt-2 border-2 border-gold-500 bg-gold-500/10 p-3">
+      <p className="text-sm text-navy-900">
+        This uses your team&apos;s <strong>one push-back for the season</strong>. The match moves to the second half, due{" "}
+        <strong>{newDueBy}</strong>, and your opponents are emailed. If it isn&apos;t played by then, your team forfeits it.
+      </p>
       <div className="mt-2 flex gap-3">
         <button
           type="button"
           disabled={pending}
           onClick={() =>
             start(async () => {
-              const res = await safeSkipMatch(matchId, consequence);
+              const res = await safePushBackMatch(matchId);
               setResult(res);
               if (res.ok) router.refresh();
             })
           }
-          className={
-            forfeit
-              ? "h-9 bg-red-600 px-4 text-xs font-bold uppercase text-white hover:bg-red-700 disabled:opacity-50"
-              : "h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
-          }
+          className="h-9 bg-navy-900 px-4 text-xs font-bold uppercase text-white hover:bg-navy-800 disabled:opacity-50"
         >
-          {pending ? "Saving…" : forfeit ? "Forfeit this match" : "Use our skip"}
+          {pending ? "Saving…" : "Use our push-back"}
         </button>
         <button type="button" onClick={() => setArmed(false)} className="text-xs font-bold uppercase text-ink/50">
           Cancel
@@ -227,7 +200,7 @@ export function SkipButton({
   );
 }
 
-/** Post (or change) when the match will be played. Due Wednesday 11:59 PM. */
+/** Post (or change) when the match will be played. Optional — it just shows everyone when it's happening. */
 export function PostTimeForm({ matchId, current, currentNote }: { matchId: string; current: string | null; currentNote: string | null }) {
   const [state, action] = useActionState(safeAction(postMatchTime), initialState);
   const [open, setOpen] = useState(false);
@@ -237,11 +210,7 @@ export function PostTimeForm({ matchId, current, currentNote }: { matchId: strin
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className={
-          current
-            ? "text-xs font-bold uppercase text-ink/55 underline underline-offset-2"
-            : "h-9 bg-gold-500 px-4 text-xs font-bold uppercase text-navy-900 hover:bg-gold-400"
-        }
+        className="text-xs font-bold uppercase text-ink/55 underline underline-offset-2"
       >
         {current ? "Change time" : "Post match time"}
       </button>

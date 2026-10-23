@@ -7,7 +7,7 @@ import { spotsTakenByLeague, teamMembers } from "@/lib/league";
 import { loadLeagueView, type ViewMatch } from "@/lib/league-view";
 import { isRegistrationOpen, teamReadiness, type Readiness } from "@/lib/league-rules";
 import { formatDeadline, utcToLaInputValue } from "@/lib/dates";
-import { OVERDUE_GRACE_MS, playoffRounds, recommendedPlayoffTeams, scheduleBy, weekOf, weekRange } from "@/lib/schedule";
+import { OVERDUE_GRACE_MS, playoffRounds, recommendedPlayoffTeams, weekOf, weekRange } from "@/lib/schedule";
 import { cn } from "@/lib/utils";
 import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import { LeagueForm } from "../league-form";
@@ -110,11 +110,6 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
       m.status === "pending" &&
       m.dueBy &&
       now.getTime() > m.dueBy.getTime() + (m.stage === "knockout" ? 0 : OVERDUE_GRACE_MS),
-  );
-
-  // Past Wednesday's cut-off with no time posted — exec's call whether that's a strike.
-  const noTime = view.matches.filter(
-    (m) => !view.isBye(m) && m.teamAId && m.teamBId && m.status === "pending" && !m.scheduledAt && m.dueBy && now > scheduleBy(m.dueBy) && now <= m.dueBy,
   );
 
   let playoffPlan: string | null = null;
@@ -285,20 +280,6 @@ export default async function ExecLeagueDetailPage({ params }: PageProps<"/exec/
       )}
 
       {/* ── Needs attention (live) ── */}
-      {isLive && noTime.length > 0 && (
-        <section className="space-y-2">
-          <Heading tone="alert">Missed Wednesday&apos;s cut-off — no match time posted ({noTime.length})</Heading>
-          <p className="text-xs text-ink/45">Both teams were emailed Thursday morning. These still have until Sunday 11:59 PM to play and report.</p>
-          <ul className="divide-y divide-red-100 border-2 border-red-200 bg-white">
-            {noTime.map((m) => (
-              <li key={m.id} className="p-3 text-sm text-navy-900">
-                <span className="text-xs font-bold uppercase text-ink/45">{view.label(m)}</span> · {view.name(m.teamAId)} vs {view.name(m.teamBId)}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
       {isLive && (needsAttention.length > 0 || disputed.length > 0) && (
         <section className="space-y-3">
           <Heading tone="alert">Needs attention ({needsAttention.length + disputed.length})</Heading>

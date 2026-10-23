@@ -2,19 +2,19 @@
  * Pickleball League season schedule — pure, no DB, so every rule is unit
  * tested (schedule.test.ts).
  *
- * The season is a weekly round robin: every team plays exactly one match a
- * week against a different opponent, for `roundRobinWeeks` weeks. Each week
- * has two cut-offs: post when you're playing by Wednesday 11:59 PM, and
- * play and report the score by the Sunday after the week, 11:59 PM.
- * The whole league is one table — not pools — so with an even number of
- * slots nobody ever sits out a week.
+ * The season is a weekly round robin: every team gets one new opponent a
+ * week, for `roundRobinWeeks` weeks. The week is only a suggestion — matches
+ * can be played and reported any time up to their half's deadline: weeks
+ * 1–4 (of 8) are due the Sunday ending week 4, weeks 5–8 the Sunday ending
+ * the round robin. The whole league is one table — not pools — so with an
+ * even number of slots nobody ever sits out a week.
  *
  * "Slots" are what the schedule is built on. Each slot is a real team or an
  * open slot (a placeholder team). Whoever is drawn against an open slot that
  * week has a bye. A team that joins late takes over an open slot and inherits
  * its remaining matches, so nobody else's matchups move.
  *
- * After the round robin: `catchupWeeks` with no new matches (makeups only —
+ * After the round robin: `catchupWeeks` with no new matches (pushed-back matches only —
  * Thanksgiving week by default), then single elimination, one round a week,
  * ending in a final on `finalOn`.
  */
@@ -143,13 +143,6 @@ export function weekDueBy(seasonStartsOn: string, week: number): Date {
   return laDeadlineToUtc(`${addDays(weekMonday(seasonStartsOn, week), 6)}T23:59`);
 }
 
-/** Monday of the calendar week (Mon–Sun) a date key falls in. */
-function mondayOf(dateKey: string): string {
-  const [y, m, d] = dateKey.split("-").map(Number);
-  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0 = Sunday
-  return addDays(dateKey, -((dow + 6) % 7));
-}
-
 /** Which season week an instant falls in (1-based; 0 or less = before the season). Weeks run Sunday to Saturday. */
 export function weekOf(seasonStartsOn: string, now: Date): number {
   return Math.floor(daysBetween(addDays(seasonStartsOn, -1), pacificDateKey(now)) / 7) + 1;
@@ -170,24 +163,37 @@ export function shiftDeadline(dueBy: Date, weeks: number): Date {
   return laDeadlineToUtc(`${addDays(pacificDateKey(dueBy), 7 * weeks)}T23:59`);
 }
 
-/** Wednesday 11:59 PM of the match's week — the cut-off for posting when the match will be played. A Sunday deadline belongs to the Mon–Sun run before it, so this is the Wednesday before. */
-export function scheduleBy(dueBy: Date): Date {
-  return laDeadlineToUtc(`${addDays(mondayOf(pacificDateKey(dueBy)), 2)}T23:59`);
+/** A reminder email this long after its send time is stale — skip it rather than send it days late. */
+const REMINDER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The most recent weekly reminder send time at or before `now`: Wednesday or
+ * Sunday, 9 AM Pacific. Null if it was more than a day ago (a missed run, or
+ * the code went live mid-week) — then nothing is due until the next one.
+ */
+export function reminderSlot(now: Date): Date | null {
+  const today = pacificDateKey(now);
+  for (let back = 0; back <= 1; back++) {
+    const key = addDays(today, -back);
+    const [y, m, d] = key.split("-").map(Number);
+    const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+    if (dow !== 0 && dow !== 3) continue;
+    const at = laInputToUtc(`${key}T09:00`);
+    if (at <= now && now.getTime() - at.getTime() < REMINDER_WINDOW_MS) return at;
+  }
+  return null;
 }
 
-/** 9 AM on the deadline day (Sunday, or a Thursday playoff deadline) — "report your score by tonight". */
-export function reportReminderAt(dueBy: Date): Date {
-  return laInputToUtc(`${pacificDateKey(dueBy)}T09:00`);
+/** Whether a match last reminded at `lastSent` gets this Wednesday's / Sunday's reminder. */
+export function reminderDue(lastSent: Date | null, now: Date): boolean {
+  const slot = reminderSlot(now);
+  return Boolean(slot && (!lastSent || lastSent < slot));
 }
 
 /** Unplayed matches are settled this long after the Sunday deadline (Monday ~10 AM), so a late-night report still counts. */
 export const OVERDUE_GRACE_MS = 10 * 60 * 60 * 1000;
 
-/**
- * "We're playing Thursday 7 PM" — must be before the score deadline. Posting
- * after Wednesday is still allowed (better late than never); the cut-off only
- * decides who gets the Thursday reminder and shows up on exec's list.
- */
+/** "We're playing Thursday 7 PM" — optional, any time before the score deadline. */
 export function postTimeProblem(m: { status: string; dueBy: Date | null }, when: Date): string | null {
   if (m.status !== "pending") return "This match already has a result.";
   if (!m.dueBy) return "This match has no deadline yet.";
@@ -232,6 +238,21 @@ export function isPowerOfTwo(n: number): boolean {
 /** Last deadline anything in the round robin can be pushed to (end of the catch-up weeks). */
 export function regularSeasonEndsAt(c: SeasonConfig): Date {
   return weekDueBy(c.seasonStartsOn, c.roundRobinWeeks + c.catchupWeeks);
+}
+
+/** The last week of the first half — week 4 of 8, week 4 of 7. */
+export function halfwayWeek(c: Pick<SeasonConfig, "roundRobinWeeks">): number {
+  return Math.ceil(c.roundRobinWeeks / 2);
+}
+
+/** The halfway point: Sunday 11:59 PM ending `halfwayWeek` — every first-half match is due then. */
+export function halfwayDueBy(c: SeasonConfig): Date {
+  return weekDueBy(c.seasonStartsOn, halfwayWeek(c));
+}
+
+/** When a round-robin week's match is due: the halfway point for the first half, the end of the round robin for the second. */
+export function poolDueBy(c: SeasonConfig, week: number): Date {
+  return week <= halfwayWeek(c) ? halfwayDueBy(c) : regularSeasonEndsAt(c);
 }
 
 /**
@@ -304,60 +325,42 @@ export function nextBracketSpot(slot: number): { slot: number; side: "A" | "B" }
 export type MatchState = {
   stage: "pool" | "knockout";
   status: "pending" | "reported" | "confirmed" | "disputed" | "forfeited";
+  round: number | null;
   dueBy: Date | null;
   extendedForTeamId: string | null;
 };
 
-/** Skips (makeups) each team gets per season. Any skip past this is a forfeit. */
-export const SKIP_LIMIT = 1;
+/** Push-backs each team gets per season. */
+export const PUSHBACK_LIMIT = 1;
 
-export type SkipDecision =
-  | { kind: "makeup" }
-  | { kind: "forfeit"; reason: "skip_used" | "own_makeup" | "no_week_left" }
-  | { kind: "blocked"; message: string };
+export type PushbackDecision = { kind: "allowed"; newDueBy: Date } | { kind: "blocked"; message: string };
 
 /**
- * "We can't make it this week" (sick, out of town). What tapping it does for
- * this team on this match:
- *
- *   - their first skip of the season → the match becomes a makeup due a week later
- *   - any skip after that            → they forfeit it, right away
- *   - they can't make their own makeup → they forfeit it (the original rule)
- *   - no week left before playoffs   → they forfeit it
- *
- * Nothing at all for playoff matches, finished matches, after the deadline,
- * or a makeup the *other* team asked for (if it isn't played, that team
- * forfeits at the deadline — the team that can still play does nothing).
+ * "We can't make it before the halfway point" (sick, out of town). A team can
+ * push ONE first-half match to the second-half deadline. Nothing else can be
+ * pushed — playoff matches, finished matches, second-half matches, a match
+ * already pushed back, or anything once the team's push-back is used.
  */
-export function skipDecision(
+export function pushbackDecision(
   m: MatchState,
-  team: { teamId: string; skipsUsed: number },
+  team: { teamId: string; pushbacksUsed: number },
   now: Date,
-  seasonEnd: Date,
-): SkipDecision {
-  if (m.stage !== "pool") return { kind: "blocked", message: "Playoff matches can't be skipped — message exec if something's wrong." };
+  c: SeasonConfig,
+): PushbackDecision {
+  if (m.stage !== "pool") return { kind: "blocked", message: "Playoff matches can't be pushed back — message exec if something's wrong." };
   if (m.status !== "pending") return { kind: "blocked", message: "This match already has a result." };
-  if (!m.dueBy || now > m.dueBy) return { kind: "blocked", message: "This week's deadline has passed." };
-  if (m.extendedForTeamId === team.teamId) return { kind: "forfeit", reason: "own_makeup" };
-  if (m.extendedForTeamId) {
-    return { kind: "blocked", message: "This is already the other team's makeup — if it isn't played by the deadline, they forfeit it." };
-  }
-  if (team.skipsUsed >= SKIP_LIMIT) return { kind: "forfeit", reason: "skip_used" };
-  if (shiftDeadline(m.dueBy, 1) > seasonEnd) return { kind: "forfeit", reason: "no_week_left" };
-  return { kind: "makeup" };
+  if (!m.dueBy || now > m.dueBy) return { kind: "blocked", message: "This match's deadline has passed." };
+  if (m.extendedForTeamId) return { kind: "blocked", message: "This match has already been pushed back." };
+  if ((m.round ?? 0) > halfwayWeek(c)) return { kind: "blocked", message: "Only first-half matches can be pushed back." };
+  if (team.pushbacksUsed >= PUSHBACK_LIMIT) return { kind: "blocked", message: "Your team already used its push-back this season." };
+  const newDueBy = regularSeasonEndsAt(c);
+  if (newDueBy <= m.dueBy) return { kind: "blocked", message: "There's no later deadline to push this match to." };
+  return { kind: "allowed", newDueBy };
 }
-
-/** The one-line warning shown before a skip that forfeits. */
-export const FORFEIT_REASON: Record<Extract<SkipDecision, { kind: "forfeit" }>["reason"], string> = {
-  skip_used: "Your team already used its one skip this season, so skipping this match is a forfeit.",
-  own_makeup: "This is your team's makeup — not playing it is a forfeit.",
-  no_week_left: "There's no week left to make this up before playoffs, so skipping it is a forfeit.",
-};
 
 /**
  * What happens to a round-robin match nobody reported by the deadline.
- * Makeup not played (whichever team couldn't make it this time) → the team
- * that missed the original week forfeits.
+ * Pushed back and still not played → the team that pushed it forfeits.
  * Otherwise nobody told anyone anything → double forfeit (neither team gets
  * the win). Exec can always overrule either one.
  */
@@ -386,12 +389,12 @@ export function weekRange(seasonStartsOn: string, week: number): string {
   return m1 === m2 ? `${MONTHS[m1 - 1]} ${d1} – ${d2}` : `${MONTHS[m1 - 1]} ${d1} – ${MONTHS[m2 - 1]} ${d2}`;
 }
 
-/** What to call a match everywhere it's shown: "Week 3 · Oct 18 – 24", "Makeup (week 2)", "Semifinals". */
+/** What to call a match everywhere it's shown: "Week 3", "Week 2 · pushed back", "Semifinals". */
 export function matchLabel(
   m: { stage: "pool" | "knockout"; round: number | null; extendedForTeamId: string | null },
   season: { seasonStartsOn: string; playoffTeams: number },
 ): string {
   if (m.stage === "knockout") return roundName(season.playoffTeams / 2 ** ((m.round ?? 1) - 1));
-  if (m.extendedForTeamId) return `Makeup (week ${m.round})`;
-  return `Week ${m.round} · ${weekRange(season.seasonStartsOn, m.round ?? 1)}`;
+  if (m.extendedForTeamId) return `Week ${m.round} · pushed back`;
+  return `Week ${m.round}`;
 }

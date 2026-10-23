@@ -5,9 +5,9 @@ import { z } from "zod";
 import { requireMember } from "@/lib/session";
 import { withTransaction } from "@/db/pool";
 import { AlreadyDone, invitePartner, leaveLeague, LeagueError, registerForLeague, respondToInvite } from "@/lib/league";
-import { outOfTownEmail, sendMany, sendPartnerInvite, sendScoreReported, skipForfeitEmail } from "@/lib/email";
-import { laInputToUtc } from "@/lib/dates";
-import { confirmScoreTx, disputeScoreTx, postMatchTimeTx, reportScoreTx, skipMatchTx } from "@/lib/match-actions";
+import { pushedBackEmail, sendMany, sendPartnerInvite, sendScoreReported } from "@/lib/email";
+import { formatDeadline, laInputToUtc } from "@/lib/dates";
+import { confirmScoreTx, disputeScoreTx, postMatchTimeTx, reportScoreTx, pushBackMatchTx } from "@/lib/match-actions";
 
 export type ActionResult = { ok: boolean; error?: string; message?: string };
 
@@ -192,26 +192,21 @@ export async function confirmScore(matchId: string): Promise<ActionResult> {
   return { ok: true, message: "Score confirmed." };
 }
 
-/** "Can't make it this week": the team's first skip becomes a makeup next week; after that it's a forfeit. */
-export async function skipMatch(matchId: string, expect: "makeup" | "forfeit"): Promise<ActionResult> {
+/** "Can't make it before the halfway point": the team's one push-back moves a first-half match to the second-half deadline. */
+export async function pushBackMatch(matchId: string): Promise<ActionResult> {
   const user = await requireMember();
   if (!z.uuid().safeParse(matchId).success) return { ok: false, error: "That match no longer exists." };
-  if (expect !== "makeup" && expect !== "forfeit") return { ok: false, error: "Refresh the page and try again." };
 
   let result;
   try {
-    result = await withTransaction((tx) => skipMatchTx(tx, { userId: user.id, matchId, expect }));
+    result = await withTransaction((tx) => pushBackMatchTx(tx, { userId: user.id, matchId }));
   } catch (e) {
     return fail(e);
   }
 
   refresh();
-  if (result.outcome === "forfeit") {
-    await sendMany(result.notify.map((p) => skipForfeitEmail(p, result.mail)));
-    return { ok: true, message: `Recorded as a forfeit — ${result.mail.otherTeam} gets the win. Everyone in the match was emailed.` };
-  }
-  await sendMany(result.notify.map((p) => outOfTownEmail(p, { ...result.mail, toOpponent: p.teamId !== result.mail.requestingTeamId })));
-  return { ok: true, message: "Done — it's now a makeup due next Sunday. That was your team's one skip for the season. Your opponents were emailed." };
+  await sendMany(result.notify.map((p) => pushedBackEmail(p, { ...result.mail, toOpponent: p.teamId !== result.mail.requestingTeamId })));
+  return { ok: true, message: `Done — it's now due ${formatDeadline(result.mail.newDueBy)}. That was your team's one push-back. Your opponents were emailed.` };
 }
 
 const postTimeSchema = z.object({
@@ -220,7 +215,7 @@ const postTimeSchema = z.object({
   note: z.string().trim().max(80, "Keep the note short."),
 });
 
-/** "We're playing Thursday 7 PM, Court 3" — due Wednesday 11:59 PM each week. */
+/** "We're playing Thursday 7 PM, Court 3" — optional, any time before the deadline. */
 export async function postMatchTime(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const user = await requireMember();
   const parsed = postTimeSchema.safeParse({

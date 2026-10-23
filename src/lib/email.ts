@@ -3,7 +3,6 @@ import { Resend } from "resend";
 import { env } from "@/lib/env";
 import { club, leagueInfo } from "@/lib/content";
 import { formatDeadline, formatEventWhen } from "@/lib/dates";
-import { scheduleBy } from "@/lib/schedule";
 
 type EventLike = { title: string; location: string; startsAt: Date; endsAt: Date };
 type Recipient = { email: string; name: string | null };
@@ -203,7 +202,7 @@ export async function sendScoreReported(
 /* ─── Pickleball League season ───────────────────────────────────────────── */
 
 export type MatchLine = {
-  /** "Week 3 · Oct 19–25", "Makeup (week 2)", "Quarterfinals" */
+  /** "Week 3", "Week 2 · pushed back", "Quarterfinals" */
   label: string;
   dueBy: Date;
   /** Null = a bye (open slot). */
@@ -222,7 +221,7 @@ function matchBox(m: MatchLine): string {
     <div style="margin:12px 0;padding:14px 16px;background:#f6f7f9;border-left:4px solid #fdb515;">
       <p style="margin:0 0 4px;font-size:12px;font-weight:700;text-transform:uppercase;color:#4b5566;">${esc(m.label)}</p>
       <p style="margin:0;">${m.opponent ? `vs ${opponentHtml(m.opponent)}` : "<strong>Bye</strong> — no match this week."}</p>
-      ${m.opponent ? `<p style="margin:6px 0 0;color:#4b5566;font-size:13px;">Post your time by ${esc(formatDeadline(scheduleBy(m.dueBy)))} · report by ${esc(formatDeadline(m.dueBy))}</p>` : ""}
+      ${m.opponent ? `<p style="margin:6px 0 0;color:#4b5566;font-size:13px;">Play and report by ${esc(formatDeadline(m.dueBy))}</p>` : ""}
     </div>`;
 }
 
@@ -259,77 +258,57 @@ export function scheduleAnnouncedEmail(
   };
 }
 
-/** Thursday: the Wednesday cut-off passed and nobody posted when this week's match is. */
-export function noTimePostedEmail(to: Recipient, d: { tournamentName: string; teamName: string; matches: MatchLine[] }): Message {
+/**
+ * Every Wednesday and Sunday morning: the matches this team still has to play,
+ * with the halfway-point deadline spelled out.
+ */
+export function matchReminderEmail(
+  to: Recipient,
+  d: { tournamentName: string; teamName: string; matches: MatchLine[]; halfwayDueBy: Date; halfwayWeek: number },
+): Message {
+  const n = d.matches.length;
+  const firstDue = d.matches.reduce((min, m) => (m.dueBy < min ? m.dueBy : min), d.matches[0].dueBy);
+  const halfwayAhead = firstDue <= d.halfwayDueBy;
   return {
     to: to.email,
-    subject: `${d.tournamentName}: post your match time`,
+    subject: `${d.tournamentName} reminder: ${n} match${n === 1 ? "" : "es"} to play by ${formatDeadline(firstDue).split(" · ")[0]}`,
     html: layout(
-      `No match time posted for ${d.teamName} yet.`,
+      `${d.teamName} has ${n} match${n === 1 ? "" : "es"} left to play.`,
       `${hey(to)}
-       <p>The Wednesday cut-off passed and nobody has posted when <strong>${esc(d.teamName)}</strong> is playing:</p>
+       <p>Friendly reminder — <strong>${esc(d.teamName)}</strong> still has ${n === 1 ? "this match" : `these ${n} matches`} to play:</p>
        ${d.matches.map(matchBox).join("")}
-       <p>Lock in a time with your opponents on Slack, post it on the site, and play and report by Sunday 11:59 PM.
-       Sick or out of town? Let your opponents know and tap <strong>Can't make it this week</strong> — it becomes a makeup next week.</p>
-       <p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.noShowRule)}</p>
-       ${button(`${club.url}/tournaments`, "Post a time")}`,
+       ${
+         halfwayAhead
+           ? `<p><strong>Deadline:</strong> every week 1–${d.halfwayWeek} match has to be played and reported by
+       <strong>${esc(formatDeadline(d.halfwayDueBy))}</strong> — the halfway point. Play them whenever works for both teams before then.</p>`
+           : `<p><strong>Deadline:</strong> play and report by <strong>${esc(formatDeadline(firstDue))}</strong>. Play whenever works for both teams before then.</p>`
+       }
+       <p>${esc(leagueInfo.outOfTownRule)}</p>
+       ${bookingLine}
+       ${button(`${club.url}/tournaments`, "See your matches")}`,
     ),
   };
 }
 
-/** Deadline morning (Sunday): the score is due tonight. */
-export function reportTonightEmail(to: Recipient, d: { tournamentName: string; teamName: string; matches: MatchLine[] }): Message {
-  return {
-    to: to.email,
-    subject: `${d.tournamentName}: report your score by tonight`,
-    html: layout(
-      `${d.teamName}'s score is due tonight.`,
-      `${hey(to)}
-       <p>No score yet for <strong>${esc(d.teamName)}</strong> — it's due <strong>tonight at 11:59 PM</strong>:</p>
-       ${d.matches.map(matchBox).join("")}
-       <p>Once you've played, any one of the four players can report it on the site.</p>
-       <p style="color:#4b5566;font-size:13px;">${esc(leagueInfo.noShowRule)}</p>
-       ${button(`${club.url}/tournaments`, "Report the score")}`,
-    ),
-  };
-}
-
-/** Someone in the match said their team can't make it this week — the match moved to a makeup week. */
-export function outOfTownEmail(
+/** A team pushed a first-half match back to the second-half deadline. */
+export function pushedBackEmail(
   to: Recipient,
   d: { tournamentName: string; requestingTeam: string; otherTeam: string; newDueBy: Date; toOpponent: boolean },
 ): Message {
   return {
     to: to.email,
-    subject: `${d.tournamentName}: match moved to a makeup`,
+    subject: `${d.tournamentName}: match pushed back`,
     html: layout(
-      `${d.requestingTeam} vs ${d.otherTeam} is now a makeup.`,
+      `${d.requestingTeam} vs ${d.otherTeam} is pushed back.`,
       `${hey(to)}
-       <p><strong>${esc(d.requestingTeam)}</strong> can't make it this week, so their match against
-       <strong>${esc(d.otherTeam)}</strong> is now a makeup, due <strong>${esc(formatDeadline(d.newDueBy))}</strong>.</p>
-       <p>That week you'll have this makeup plus your regular match — post a time for it by Wednesday like any other.</p>
+       <p><strong>${esc(d.requestingTeam)}</strong> can't make it before the halfway point, so their match against
+       <strong>${esc(d.otherTeam)}</strong> is pushed back — it's now due <strong>${esc(formatDeadline(d.newDueBy))}</strong>.</p>
        ${
          d.toOpponent
-           ? `<p>This doesn't use your team's skip, and your team isn't penalized: if the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it and <strong>you get the win</strong>.</p>`
-           : `<p>That was your team's one skip for the season. If the makeup doesn't happen, ${esc(d.requestingTeam)} forfeits it, and any skip after this is a forfeit.</p>`
+           ? `<p>This doesn't use your team's push-back. If the match doesn't happen by then, ${esc(d.requestingTeam)} forfeits it and <strong>you get the win</strong>.</p>`
+           : `<p>That was your team's one push-back for the season. If the match doesn't happen by then, your team forfeits it.</p>`
        }
        ${button(`${club.url}/tournaments`, "See your schedule")}`,
-    ),
-  };
-}
-
-/** A team skipped a match it couldn't skip for free — the other team wins by forfeit. */
-export function skipForfeitEmail(to: Recipient, d: { tournamentName: string; forfeitingTeam: string; otherTeam: string }): Message {
-  return {
-    to: to.email,
-    subject: `${d.tournamentName}: ${d.forfeitingTeam} forfeited`,
-    html: layout(
-      `${d.forfeitingTeam} forfeited their match against ${d.otherTeam}.`,
-      `${hey(to)}
-       <p><strong>${esc(d.forfeitingTeam)}</strong> can't play their match against <strong>${esc(d.otherTeam)}</strong>,
-       and they've already used their one skip this season (or it was their makeup), so it's a forfeit —
-       <strong>${esc(d.otherTeam)}</strong> gets the win. No need to schedule this one.</p>
-       ${button(`${club.url}/tournaments`, "See the standings")}`,
     ),
   };
 }

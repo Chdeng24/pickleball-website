@@ -248,7 +248,7 @@ export const tournaments = pgTable("tournament", {
   /**
    * Weekly season (see src/lib/schedule.ts). Monday of week 1, as a Pacific
    * calendar date. Every team plays one match a week for `roundRobinWeeks`
-   * weeks, then `catchupWeeks` of makeups only, then single elimination with
+   * weeks, then `catchupWeeks` for pushed-back matches only, then single elimination with
    * the top `playoffTeams`, ending in a final on `finalOn`.
    */
   seasonStartsOn: date("season_starts_on", { mode: "string" }),
@@ -318,20 +318,20 @@ export const matches = pgTable("match", {
   /** Last time the weekly Sunday nudge mentioned this match. Caps it at once/week. */
   lastNudgedAt: timestamp("last_nudged_at", { withTimezone: true }),
   /**
-   * Set when a team said they're out of town: dueBy moved a week later, and if
-   * the makeup isn't played this team forfeits it. Once per match.
+   * Set when a team pushed this first-half match back: dueBy moved to the
+   * second-half deadline, and if it isn't played this team forfeits it. Once per match.
    */
   extendedForTeamId: uuid("extended_for_team_id").references(() => tmTeams.id, { onDelete: "set null" }),
   /** Unused — a Monday matchup email was dropped to keep it to two reminders a week. Kept so old rows stay valid. */
   weekEmailSentAt: timestamp("week_email_sent_at", { withTimezone: true }),
-  /** The Thursday "no match time posted yet" email went out. Cleared when a match is pushed to a makeup week. */
+  /** Last Wednesday/Sunday reminder that listed this match. Caps it at one per reminder. Cleared when pushed back. */
   reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
-  /** When the teams say they'll play — posted by any of the four players, due Wednesday 11:59 PM. Cleared on a makeup. */
+  /** When the teams say they'll play — posted by any of the four players, optional. Cleared when pushed back. */
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   /** Free text with the time, e.g. "Court 3" or "Clark Kerr". */
   scheduledNote: text("scheduled_note"),
   scheduledBy: uuid("scheduled_by").references(() => users.id, { onDelete: "set null" }),
-  /** The deadline-morning (Sunday) "report your score by tonight" email went out. Cleared on a makeup. */
+  /** Unused — the old deadline-morning email, folded into the weekly reminders. Kept so old rows stay valid. */
   reportReminderSentAt: timestamp("report_reminder_sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

@@ -4,8 +4,8 @@ import { runLeagueTick } from "@/lib/social-league";
 
 /**
  * Hit hourly by the "Hourly reminders" GitHub Actions workflow — see DEPLOY.md.
- * Auto-confirms scores, settles unreported matches, and sends the Monday
- * matchup and Thursday unreported-score emails. Safe to call any number of times.
+ * Auto-confirms scores, settles unreported matches, and sends the Wednesday
+ * and Sunday match reminders. Safe to call any number of times.
  */
 export async function GET(request: Request) {
   const secret = env().CRON_SECRET;

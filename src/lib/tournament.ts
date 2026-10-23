@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { withTransaction, type Tx } from "@/db/pool";
 import { isDrawReady, isSchedulable } from "@/lib/league-rules";
@@ -7,8 +7,10 @@ import { checkMatchScore, type GameScore } from "@/lib/matchscore";
 import {
   balancedSlotOrder,
   bracketSeedPairs,
+  currentWeek,
   nextBracketSpot,
   playoffRounds,
+  poolDueBy,
   roundRobinRounds,
   shiftDeadline,
   slotCount,
@@ -34,7 +36,7 @@ export const LEAGUE_POOL = "A";
 
 type Tournament = typeof schema.tournaments.$inferSelect;
 
-/** Pushed to a makeup week: the posted time and that week's reminders start over. */
+/** Pushed back (or given more time by exec): the posted time and the reminder history start over. */
 export const MAKEUP_RESET = {
   scheduledAt: null,
   scheduledNote: null,
@@ -114,14 +116,13 @@ async function addPlaceholder(tx: Tx, tournamentId: string, name: string): Promi
   return row.id;
 }
 
-/** Point every pending round-robin match of `fromId` (optionally only those not yet due) at `toId`. Clears the sent-email flags so the new pairing gets its own emails. */
-async function repointMatches(tx: Tx, tournamentId: string, fromId: string, toId: string, notBefore: Date | null) {
-  const due = notBefore ? or(isNull(schema.matches.dueBy), sql`${schema.matches.dueBy} >= ${notBefore}`) : undefined;
+/** Point every pending round-robin match of `fromId` (optionally only weeks `fromWeek` on) at `toId`. Clears the sent-email flags so the new pairing gets its own emails. */
+async function repointMatches(tx: Tx, tournamentId: string, fromId: string, toId: string, fromWeek: number | null) {
   const base = and(
     eq(schema.matches.tournamentId, tournamentId),
     eq(schema.matches.stage, "pool"),
     eq(schema.matches.status, "pending"),
-    due,
+    fromWeek === null ? undefined : gte(schema.matches.round, fromWeek),
   );
   const reset = NEW_PAIRING_RESET;
   const a = await tx
@@ -135,6 +136,11 @@ async function repointMatches(tx: Tx, tournamentId: string, fromId: string, toId
     .where(and(base, eq(schema.matches.teamBId, fromId)))
     .returning({ id: schema.matches.id });
   return a.length + b.length;
+}
+
+/** Once the season is live, schedule changes apply from the current week on; earlier weeks stay as they were. */
+function liveFromWeek(t: Tournament, now: Date): number | null {
+  return t.poolsAnnouncedAt ? currentWeek(seasonConfig(t).seasonStartsOn, now) : null;
 }
 
 /** A placeholder nobody references any more is deleted; one still holding past byes is retired instead. */
@@ -238,7 +244,7 @@ export async function generateDraftDrawTx(
         round: i + 1,
         teamAId,
         teamBId,
-        dueBy: weekDueBy(season.seasonStartsOn, i + 1),
+        dueBy: poolDueBy(season, i + 1),
       })),
     ),
   );
@@ -332,8 +338,7 @@ export async function fillOpenSlotTx(tx: Tx, placeholderId: string, teamId: stri
   const roster = await tx.select().from(schema.tmTeamMembers).where(eq(schema.tmTeamMembers.teamId, team.id));
   if (!isSchedulable(roster)) throw new TournamentError("incomplete_team");
 
-  // "This week on" = any match whose deadline hasn't passed yet.
-  const moved = await repointMatches(tx, tournament.id, slot.id, team.id, tournament.poolsAnnouncedAt ? now : null);
+  const moved = await repointMatches(tx, tournament.id, slot.id, team.id, liveFromWeek(tournament, now));
   await tx.update(schema.tmTeams).set({ pool: LEAGUE_POOL }).where(eq(schema.tmTeams.id, team.id));
   await retirePlaceholder(tx, slot.id);
   return { tournament, team, moved, live: Boolean(tournament.poolsAnnouncedAt) };
@@ -343,7 +348,7 @@ export async function fillOpenSlotTx(tx: Tx, placeholderId: string, teamId: stri
  * Withdraws a team. During registration it just frees the spots. Once it's
  * in the schedule (draft or live), its slot becomes an open slot — opponents
  * get a bye unless a late team takes it over — and played results stand.
- * Live, an unplayed match whose deadline already passed is a forfeit win for
+ * Live, an unplayed match from an earlier week is a forfeit win for
  * the opponent, and in the playoffs the opponent advances.
  */
 export async function withdrawTeamTx(tx: Tx, teamId: string, now = new Date()): Promise<void> {
@@ -360,14 +365,14 @@ export async function withdrawTeamTx(tx: Tx, teamId: string, now = new Date()): 
 
   const live = Boolean(tournament.poolsAnnouncedAt);
   const openId = await addPlaceholder(tx, tournament.id, "Open slot");
-  await repointMatches(tx, tournament.id, teamId, openId, live ? now : null);
+  await repointMatches(tx, tournament.id, teamId, openId, liveFromWeek(tournament, now));
   await retirePlaceholder(tx, openId);
   if (!live) {
     await tx.update(schema.tmTeams).set({ pool: null }).where(eq(schema.tmTeams.id, teamId));
     return;
   }
 
-  // What's left pointing at them is past due (round robin) or a playoff match: the other side wins.
+  // What's left pointing at them is from an earlier week (round robin) or a playoff match: the other side wins.
   const theirs = await tx
     .select()
     .from(schema.matches)

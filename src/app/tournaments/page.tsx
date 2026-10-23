@@ -16,7 +16,7 @@ import { db, schema } from "@/db";
 import { formatDeadline, formatEventDay, formatEventWhen, utcToLaInputValue } from "@/lib/dates";
 import { membershipsFor, spotsTakenByLeague, teamMembers } from "@/lib/league";
 import { loadLeagueView, resultText, teamCards, type LeagueView } from "@/lib/league-view";
-import { currentWeek, FORFEIT_REASON, playoffRounds, regularSeasonEndsAt, scheduleBy, skipDecision, SKIP_LIMIT } from "@/lib/schedule";
+import { currentWeek, halfwayDueBy, halfwayWeek, playoffRounds, PUSHBACK_LIMIT, pushbackDecision } from "@/lib/schedule";
 import { Bracket, StandingsTable, WeekSchedule } from "@/components/site/league-tables";
 import { TeamCardsProvider, TeamName } from "@/components/site/team-hover";
 import {
@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 import { RegisterForm } from "./register-form";
 import { InviteButtons } from "./invite-buttons";
 import { InvitePartnerForm, LeaveLeagueButton } from "./team-controls";
-import { ScoreReportForm, DisputeScoreButton, ConfirmScoreButton, SkipButton, PostTimeForm } from "./score-form";
+import { ScoreReportForm, DisputeScoreButton, ConfirmScoreButton, PushBackButton, PostTimeForm } from "./score-form";
 
 export const metadata: Metadata = { title: "Tournaments" };
 
@@ -150,17 +150,20 @@ function SeasonLine({ season, now }: { season: NonNullable<LeagueView["season"]>
   } catch {
     final = null;
   }
+  const half = halfwayWeek(season);
+  const deadline = week <= half ? ` · Weeks 1–${half} due ${formatDeadline(halfwayDueBy(season))}` : "";
   const phase =
     week < 1
       ? "Week 1 starts Sunday"
       : week <= season.roundRobinWeeks
         ? `Week ${week} of ${season.roundRobinWeeks}`
         : week <= season.roundRobinWeeks + season.catchupWeeks
-          ? "Catch-up week — makeups only"
+          ? "Catch-up week — pushed-back matches only"
           : "Playoffs";
   return (
     <p className="mt-1 text-xs font-semibold text-navy-900">
-      {phase} · Top {season.playoffTeams} make playoffs{final ? ` · Final ${formatEventDay(final)}` : ""}
+      {phase}
+      {deadline} · Top {season.playoffTeams} make playoffs{final ? ` · Final ${formatEventDay(final)}` : ""}
     </p>
   );
 }
@@ -327,20 +330,17 @@ async function MyTeam({
 function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string; now: Date }) {
   const mine = [...view.pool, ...view.knockout]
     .filter((m) => m.teamAId === teamId || m.teamBId === teamId)
-    .sort((a, b) => (a.dueBy?.getTime() ?? 0) - (b.dueBy?.getTime() ?? 0));
+    .sort((a, b) => (a.dueBy?.getTime() ?? 0) - (b.dueBy?.getTime() ?? 0) || (a.round ?? 0) - (b.round ?? 0));
   const myPlayers = new Set(view.players(teamId).map((p) => p.memberId));
   const upNext = mine.find((m) => m.status === "pending" && !view.isBye(m) && m.dueBy && m.dueBy >= now);
-  const seasonEnd = view.season ? regularSeasonEndsAt(view.season) : null;
-  const skipsUsed = view.pool.filter((m) => m.extendedForTeamId === teamId).length;
-  const skipsLeft = Math.max(0, SKIP_LIMIT - skipsUsed);
+  const pushbacksUsed = view.pool.filter((m) => m.extendedForTeamId === teamId).length;
+  const pushbacksLeft = Math.max(0, PUSHBACK_LIMIT - pushbacksUsed);
 
   return (
     <div className="space-y-3">
       <p className="flex flex-wrap items-baseline justify-between gap-2 text-xs font-bold uppercase tracking-wide text-ink/50">
         Your matches
-        <span className={skipsLeft ? "text-ink/45" : "text-red-700"}>
-          {skipsLeft ? `${skipsLeft} skip left this season` : "Skip used — any more skips are forfeits"}
-        </span>
+        <span className="text-ink/45">{pushbacksLeft ? `${pushbacksLeft} push-back left` : "Push-back used"}</span>
       </p>
       {mine.length === 0 && <p className="text-sm text-ink/50">No matches yet.</p>}
       {mine.map((m) => {
@@ -349,8 +349,8 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
         const report = view.reportByMatch.get(m.id);
         const reportedByUs = Boolean(report?.reportedBy && myPlayers.has(report.reportedBy));
         const known = Boolean(m.teamAId && m.teamBId);
-        const skip = seasonEnd && !bye && known ? skipDecision(m, { teamId, skipsUsed }, now, seasonEnd) : null;
-        const othersMakeup = Boolean(m.extendedForTeamId && m.extendedForTeamId !== teamId && m.status === "pending");
+        const pushback = view.season && !bye && known ? pushbackDecision(m, { teamId, pushbacksUsed }, now, view.season) : null;
+        const othersPushback = Boolean(m.extendedForTeamId && m.extendedForTeamId !== teamId && m.status === "pending");
         const opponents = oppId && !bye ? view.players(oppId) : [];
 
         return (
@@ -362,7 +362,7 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
               {view.label(m)}
               {m.id === upNext?.id && <span className="bg-gold-500 px-1.5 py-0.5 text-navy-900">Up next</span>}
             </p>
-            <p className="mt-1 text-sm font-semibold text-navy-900">{bye ? "Bye — no match this week" : <>vs <TeamName teamId={oppId} name={view.name(oppId)} /></>}</p>
+            <p className="mt-1 text-sm font-semibold text-navy-900">{bye ? "Bye — no match" : <>vs <TeamName teamId={oppId} name={view.name(oppId)} /></>}</p>
             {opponents.length > 0 && (
               <p className="mt-0.5 text-xs text-ink/55">
                 {opponents.map((p, i) => (
@@ -379,28 +379,25 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
             {!bye && m.status !== "pending" && <p className="mt-1 text-xs text-ink/50">{resultText(view, m, teamId)}</p>}
             {!bye && m.status === "pending" && m.dueBy && known && (
               <p className="mt-1 text-xs text-ink/55">
-                {m.scheduledAt ? (
+                {m.scheduledAt && (
                   <>
                     <Check size={12} className="mr-1 inline text-gold-500" />
                     Playing <strong className="text-navy-900">{formatDeadline(m.scheduledAt)}</strong>
                     {m.scheduledNote ? ` · ${m.scheduledNote}` : ""}
+                    {" · "}
                   </>
-                ) : (
-                  <span className={now > scheduleBy(m.dueBy) ? "font-semibold text-red-700" : undefined}>
-                    No time posted — due {formatDeadline(scheduleBy(m.dueBy))}
-                  </span>
                 )}
-                {` · report by ${formatDeadline(m.dueBy)}`}
+                Play and report by {formatDeadline(m.dueBy)}
               </p>
             )}
 
-            {othersMakeup && (
+            {othersPushback && (
               <p className="mt-1 text-xs text-ink/55">
-                Makeup — {view.name(oppId)} couldn&apos;t play the original week. If it isn&apos;t played by the deadline, they forfeit it.
+                {view.name(oppId)} pushed this match back. If it isn&apos;t played by the deadline, they forfeit it.
               </p>
             )}
             {m.status === "pending" && m.extendedForTeamId === teamId && (
-              <p className="mt-1 text-xs font-semibold text-red-700">Your team&apos;s makeup — if it isn&apos;t played by the deadline, it&apos;s a forfeit.</p>
+              <p className="mt-1 text-xs font-semibold text-red-700">Your team pushed this back — if it isn&apos;t played by the deadline, it&apos;s a forfeit.</p>
             )}
             {m.status === "pending" && !bye && known && (
               <div className="mt-2 flex flex-wrap items-center gap-4">
@@ -410,14 +407,7 @@ function TeamSchedule({ view, teamId, now }: { view: LeagueView; teamId: string;
                   currentNote={m.scheduledNote}
                 />
                 <ScoreReportForm matchId={m.id} teamAName={view.name(m.teamAId)} teamBName={view.name(m.teamBId)} />
-                {skip && skip.kind !== "blocked" && (
-                  <SkipButton
-                    matchId={m.id}
-                    consequence={skip.kind}
-                    warning={skip.kind === "forfeit" ? FORFEIT_REASON[skip.reason] : undefined}
-                    opponentName={view.name(oppId)}
-                  />
-                )}
+                {pushback?.kind === "allowed" && <PushBackButton matchId={m.id} newDueBy={formatDeadline(pushback.newDueBy)} />}
               </div>
             )}
             {m.status === "reported" &&

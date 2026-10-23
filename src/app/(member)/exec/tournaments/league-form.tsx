@@ -110,8 +110,9 @@ export function LeagueForm({ defaults }: { defaults?: LeagueDefaults }) {
       <div className="sm:col-span-2 border-t-2 border-navy-900/10 pt-5">
         <p className="font-display text-xs font-bold uppercase tracking-wide text-navy-900">Season</p>
         <p className="mt-1 text-xs text-ink/50">
-          One match a week (Mon–Sun) for the round-robin weeks, then catch-up weeks with no new matches (makeups only),
-          then single elimination one round a week, ending in the final.
+          One new opponent a week for the round-robin weeks. First-half matches are due at the halfway point, second-half
+          matches at the end of the round robin (after any catch-up weeks). Then single elimination one round a week, ending
+          in the final.
         </p>
       </div>
 

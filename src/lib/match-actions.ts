@@ -4,12 +4,12 @@ import { schema } from "@/db";
 import type { Tx } from "@/db/pool";
 import { AlreadyDone, LeagueError } from "@/lib/league";
 import { checkMatchScore, type GameScore } from "@/lib/matchscore";
-import { postTimeProblem, regularSeasonEndsAt, shiftDeadline, skipDecision } from "@/lib/schedule";
+import { postTimeProblem, pushbackDecision } from "@/lib/schedule";
 import { MAKEUP_RESET, seasonConfig, settleMatchTx } from "@/lib/tournament";
 
 /**
  * What a player can do to one match: report, confirm, dispute, post a time,
- * skip it (one makeup per team per season, forfeits after that) — plus the
+ * push it back (one first-half match per team per season) — plus the
  * admin's dispute ruling. Each runs inside a
  * caller-supplied transaction so the server actions stay thin and the rules
  * are exercised against the real DB in `npm run test:season`.
@@ -108,8 +108,8 @@ export async function disputeScoreTx(tx: Tx, input: { userId: string; matchId: s
   await tx.update(schema.matches).set({ status: "disputed" }).where(eq(schema.matches.id, match.id));
 }
 
-/** How many skips (makeups) a team has used this season. */
-export async function skipsUsedTx(tx: Tx, tournamentId: string, teamId: string): Promise<number> {
+/** How many push-backs a team has used this season. */
+export async function pushbacksUsedTx(tx: Tx, tournamentId: string, teamId: string): Promise<number> {
   const [row] = await tx
     .select({ n: sql<number>`count(*)::int` })
     .from(schema.matches)
@@ -118,29 +118,18 @@ export async function skipsUsedTx(tx: Tx, tournamentId: string, teamId: string):
 }
 
 /**
- * "We can't make it this week" (sick, out of town). The team's first skip of
- * the season turns the match into a makeup due a week later; every skip
- * after that — or not making their own makeup, or a week with no makeup week
- * left — is an immediate forfeit to the other team. See schedule.ts skipDecision.
+ * "We can't make it before the halfway point" (sick, out of town). Moves one
+ * first-half match to the second-half deadline. If it still isn't played by
+ * then, the team that pushed it back forfeits. See schedule.ts pushbackDecision.
  */
-export async function skipMatchTx(
-  tx: Tx,
-  input: { userId: string; matchId: string; now?: Date; /** What the button promised — refuse if it's changed since (a skip used in another tab). */ expect: "makeup" | "forfeit" },
-) {
+export async function pushBackMatchTx(tx: Tx, input: { userId: string; matchId: string; now?: Date }) {
   const { match, tournament, players, me } = await myMatch(tx, input.matchId, input.userId);
-  // One skip at a time per team, so two taps on two different matches can't both get the free makeup.
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`skip:${me.teamId}`}))`);
+  // One push-back at a time per team, so two taps on two different matches can't both get it.
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`pushback:${me.teamId}`}))`);
 
-  const skipsUsed = await skipsUsedTx(tx, tournament.id, me.teamId);
-  const decision = skipDecision(match, { teamId: me.teamId, skipsUsed }, input.now ?? new Date(), regularSeasonEndsAt(seasonConfig(tournament)));
+  const pushbacksUsed = await pushbacksUsedTx(tx, tournament.id, me.teamId);
+  const decision = pushbackDecision(match, { teamId: me.teamId, pushbacksUsed }, input.now ?? new Date(), seasonConfig(tournament));
   if (decision.kind === "blocked") throw new LeagueError(decision.message);
-  if (decision.kind !== input.expect) {
-    throw new LeagueError(
-      decision.kind === "forfeit"
-        ? "Your team's skip was just used on another match — skipping this one now would be a forfeit. Refresh to see it."
-        : "This changed since you loaded the page — refresh and try again.",
-    );
-  }
 
   const names = await tx
     .select({ id: schema.tmTeams.id, name: schema.tmTeams.name })
@@ -149,26 +138,18 @@ export async function skipMatchTx(
   const otherId = me.teamId === match.teamAId ? match.teamBId! : match.teamAId!;
   const teamName = names.find((t) => t.id === me.teamId)?.name ?? "A team";
   const otherTeam = names.find((t) => t.id === otherId)?.name ?? "their opponent";
-  const notify = players.filter((p) => p.memberId !== input.userId);
 
-  if (decision.kind === "forfeit") {
-    await settleMatchTx(tx, match, "forfeited", otherId);
-    return { outcome: "forfeit" as const, reason: decision.reason, notify, mail: { tournamentName: tournament.name, forfeitingTeam: teamName, otherTeam } };
-  }
-
-  const newDueBy = shiftDeadline(match.dueBy!, 1);
   await tx
     .update(schema.matches)
-    .set({ dueBy: newDueBy, extendedForTeamId: me.teamId, ...MAKEUP_RESET })
+    .set({ dueBy: decision.newDueBy, extendedForTeamId: me.teamId, ...MAKEUP_RESET })
     .where(eq(schema.matches.id, match.id));
   return {
-    outcome: "makeup" as const,
-    notify,
-    mail: { tournamentName: tournament.name, requestingTeam: teamName, requestingTeamId: me.teamId, otherTeam, newDueBy },
+    notify: players.filter((p) => p.memberId !== input.userId),
+    mail: { tournamentName: tournament.name, requestingTeam: teamName, requestingTeamId: me.teamId, otherTeam, newDueBy: decision.newDueBy },
   };
 }
 
-/** "We're playing Thursday 7 PM, Court 3" — due Wednesday 11:59 PM each week. Any of the four players; posting again updates it. */
+/** "We're playing Thursday 7 PM, Court 3" — optional. Any of the four players; posting again updates it. */
 export async function postMatchTimeTx(tx: Tx, input: { userId: string; matchId: string; when: Date; note: string }) {
   const { match } = await myMatch(tx, input.matchId, input.userId);
   const problem = postTimeProblem(match, input.when);
